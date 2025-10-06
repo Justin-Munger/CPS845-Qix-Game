@@ -114,28 +114,32 @@ qix_pos = [GRID_H//3, GRID_W//3]
 qix_vel = [1, 1]
 
 def move_qix():
-    # simple random-walk with bounce
+    # simple random-walk with occasional random direction tweak
     if random.random() < 0.02:
         qix_vel[0] *= -1 if random.random() < 0.5 else 1
         qix_vel[1] *= -1 if random.random() < 0.5 else 1
+
     ny = qix_pos[0] + qix_vel[0]
     nx = qix_pos[1] + qix_vel[1]
-    if not in_bounds(ny, nx) or grid[ny][nx] == FILLED or grid[ny][nx] == BORDER:
-        # bounce by reversing a component
+
+    # bounce only if next tile is FILLED or BORDER
+    if not in_bounds(ny, nx) or grid[ny][nx] in (FILLED, BORDER):
+        # reverse velocities as in your original code
         if not in_bounds(ny, nx) or grid[ny][nx] == BORDER:
             qix_vel[0] *= -1
             qix_vel[1] *= -1
+        else:
+            # reverse only the offending axis
+            if not in_bounds(ny, qix_pos[1]) or grid[ny][qix_pos[1]] in (FILLED, BORDER):
+                qix_vel[0] *= -1
+            if not in_bounds(qix_pos[0], nx) or grid[qix_pos[0]][nx] in (FILLED, BORDER):
+                qix_vel[1] *= -1
+
         ny = qix_pos[0] + qix_vel[0]
         nx = qix_pos[1] + qix_vel[1]
-    # avoid stepping on trail (makes game harder) - random adjust
-    if in_bounds(ny, nx) and grid[ny][nx] == TRAIL:
-        if random.random() < 0.7:
-            # pick a different direction
-            qix_vel[0] = random.choice([-1,0,1])
-            qix_vel[1] = random.choice([-1,0,1])
-            ny = qix_pos[0] + qix_vel[0]
-            nx = qix_pos[1] + qix_vel[1]
-    if in_bounds(ny, nx):
+
+    # final move: only apply move if empty or trail (do not enter FILLED/BORDER)
+    if in_bounds(ny, nx) and grid[ny][nx] in (EMPTY, TRAIL):
         qix_pos[0], qix_pos[1] = ny, nx
 
 def commit_trail_and_fill():
