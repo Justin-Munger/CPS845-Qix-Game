@@ -30,6 +30,8 @@ COL_QIX = (200, 50, 50)
 # Player movement speed (tiles per move)
 PLAYER_SPEED = 1
 last_key = None  # "x" or "y" or None
+trail_start_pos = (GRID_W//2, GRID_H-1)  # (y, x) where the trail began
+
 
 # === Game setup ===
 pygame.init()
@@ -100,14 +102,28 @@ def percent_filled():
                     filled += 1
     return filled / total if total>0 else 0
 
+def compute_player_perimeter():
+    allowed = set()
+    for y in range(GRID_H):
+        for x in range(GRID_W):
+            if grid[y][x] == EMPTY:
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        ny, nx = y + dy, x + dx
+                        if in_bounds(ny, nx):
+                            allowed.add((ny, nx))
+    return allowed
+
 # Player starts at bottom-center border
 player_x = GRID_W//2
 player_y = GRID_H-1
 on_border = True
-lives = 3
+lifeforce = 9
 score = 0
 drawing = False
 trail_cells = []  # list of (y,x) in trail order
+# global variable storing allowed perimeter tiles
+player_perimeter = compute_player_perimeter()
 
 # Qix enemy - a single moving point
 qix_pos = [GRID_H//3, GRID_W//3]
@@ -143,7 +159,7 @@ def move_qix():
         qix_pos[0], qix_pos[1] = ny, nx
 
 def commit_trail_and_fill():
-    global score
+    global score, player_perimeter
     if not trail_cells:
         return
 
@@ -165,6 +181,8 @@ def commit_trail_and_fill():
     # Trail is already marked FILLED
     score += newly_filled * 10
     trail_cells.clear()
+    # dynamically recompute player perimeter
+    player_perimeter = compute_player_perimeter()
 
 def reset_trail():
     global trail_cells
@@ -214,34 +232,45 @@ while running:
     if dx != 0 or dy != 0:
         nx = player_x + dx
         ny = player_y + dy
-        if in_bounds(ny, nx):
+        #if in_bounds(ny, nx) and (ny, nx) in player_perimeter:
+        if in_bounds(ny, nx) and ((ny, nx) in player_perimeter or grid[ny][nx] == EMPTY):
+
+        #if in_bounds(ny, nx) and ((ny, nx) in player_perimeter or grid[ny][nx] in (EMPTY, BORDER)):
+
+        #if in_bounds(ny, nx):
             # If currently on border and move off border into EMPTY/FILLED:
             if grid[player_y][player_x] == BORDER and grid[ny][nx] == EMPTY:
-                # start drawing trail
-                drawing = True
-                trail_cells = []
-                
-            if grid[player_y][player_x] == FILLED and grid[ny][nx] == EMPTY:
+                trail_start_pos = (player_y, player_x)
+                print(trail_start_pos)
                 # start drawing trail
                 drawing = True
                 trail_cells = []
 
-            # If drawing and moving onto Qix -> lose life
+            if grid[player_y][player_x] == FILLED and grid[ny][nx] == EMPTY:
+                trail_start_pos = (player_y, player_x)
+                print(trail_start_pos)
+                # start drawing trail
+                drawing = True
+                trail_cells = []
+                
+
+            # If drawing and moving onto Qix (player's square hits the qix not the trail) -> lose life
             if drawing and (ny, nx) == (qix_pos[0], qix_pos[1]):
-                lives -= 1
+                lifeforce -= 1
                 reset_trail()
                 drawing = False
-                player_x, player_y = GRID_W//2, GRID_H-1  # reset to border
+                player_y, player_x = trail_start_pos
             else:
                 player_x, player_y = nx, ny
                 # add trail if we're in empty playfield
                 if drawing:
                     if grid[player_y][player_x] == TRAIL:
                         # crossing own trail -> death
-                        lives -= 1
+                        lifeforce -= 1
                         reset_trail()
                         drawing = False
-                        player_x, player_y = GRID_W//2, GRID_H-1
+                        player_y, player_x = trail_start_pos
+
                     else:
                         # mark trail
                         if grid[player_y][player_x] == EMPTY:
@@ -254,12 +283,14 @@ while running:
             # If we returned to border while drawing -> commit trail
             if drawing and grid[player_y][player_x] == BORDER:
                 commit_trail_and_fill()
+                player_perimeter = compute_player_perimeter()
                 trail_cells = []
                 drawing = False
 
             # If we returned into FILLED area (closing by touching filled) -> commit
             if drawing and grid[player_y][player_x] == FILLED:
                 commit_trail_and_fill()
+                player_perimeter = compute_player_perimeter()
                 trail_cells = []
                 drawing = False
 
@@ -268,10 +299,11 @@ while running:
 
     # Collisions: qix intersects trail -> lose life
     if tuple(qix_pos) in trail_cells:
-        lives -= 1
+        lifeforce -= 1
         reset_trail()
         drawing = False
-        player_x, player_y = GRID_W//2, GRID_H-1
+        player_y, player_x = trail_start_pos
+        
 
     # Draw
     screen.fill((0,0,0))
@@ -288,13 +320,13 @@ while running:
     pygame.draw.rect(screen, COL_QIX, pygame.Rect(qix_pos[1]*TILE_SIZE, qix_pos[0]*TILE_SIZE, TILE_SIZE, TILE_SIZE))
 
     # HUD
-    txt = font.render(f"Lives: {lives}  Score: {score}  Filled: {int(percent_filled()*100)}%", True, (255,255,255))
+    txt = font.render(f"Lifeforce: {lifeforce}  Score: {score}  Filled: {int(percent_filled()*100)}%", True, (255,255,255))
     screen.blit(txt, (10, 10))
 
     pygame.display.flip()
 
     # check game over / win
-    if lives <= 0:
+    if lifeforce <= 0:
         print("Game Over")
         running = False
     if percent_filled() >= FILL_THRESHOLD:
