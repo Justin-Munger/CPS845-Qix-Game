@@ -139,26 +139,27 @@ def move_qix():
 
 def commit_trail_and_fill():
     global score
-    # Convert trail to filled or empty depending on which side enemy(s) are on.
-    # Steps:
-    # 1) mark trail as temporarily FILLED so flood fill can treat differently (we'll revert if enemy reaches)
-    for (y,x) in trail_cells:
-        grid[y][x] = TRAIL
-    # 2) find all tiles reachable from Qix position (in current grid treating TRAIL as barrier)
+    if not trail_cells:
+        return
+
+    # Treat trail as temporary barrier for flood-fill
+    for (y, x) in trail_cells:
+        grid[y][x] = FILLED  # mark trail as filled immediately
+
+    # lood-fill from Qix to find reachable empty tiles
     reachable_from_qix = grid_fill_from_points([(qix_pos[0], qix_pos[1])])
-    # 3) Any unfilled tile that is NOT reachable_from_qix becomes FILLED
+
+    # Any empty tile not reachable becomes FILLED
     newly_filled = 0
     for y in range(GRID_H):
         for x in range(GRID_W):
-            if grid[y][x] == EMPTY:
-                if (y,x) not in reachable_from_qix:
-                    grid[y][x] = FILLED
-                    newly_filled += 1
-    # 4) Convert trail into FILLED (if on filled side) or EMPTY otherwise. For simplicity convert trail to FILLED.
-    # (classic Qix converts only the enclosed region; we've already converted enclosed tiles above).
-    for (y,x) in trail_cells:
-        grid[y][x] = FILLED
+            if grid[y][x] == EMPTY and (y, x) not in reachable_from_qix:
+                grid[y][x] = FILLED
+                newly_filled += 1
+
+    # Trail is already marked FILLED
     score += newly_filled * 10
+    trail_cells.clear()
 
 def reset_trail():
     global trail_cells
