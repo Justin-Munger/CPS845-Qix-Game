@@ -29,6 +29,7 @@ COL_QIX = (200, 50, 50)
 
 # Player movement speed (tiles per move)
 PLAYER_SPEED = 1
+last_key = None  # "x" or "y" or None
 
 # === Game setup ===
 pygame.init()
@@ -181,15 +182,29 @@ while running:
                 running = False
 
     keys = pygame.key.get_pressed()
+
+    # Player movement with single-axis and last-key lock
     dx = dy = 0
-    if keys[pygame.K_LEFT]:
-        dx = -1
-    elif keys[pygame.K_RIGHT]:
-        dx = 1
-    if keys[pygame.K_UP]:
-        dy = -1
-    elif keys[pygame.K_DOWN]:
-        dy = 1
+    pressed_keys = {
+        pygame.K_LEFT: (-1, 0),
+        pygame.K_RIGHT: (1, 0),
+        pygame.K_UP: (0, -1),
+        pygame.K_DOWN: (0, 1)
+    }
+
+    # Update last_key if a new key is pressed
+    for key in pressed_keys:
+        if keys[key]:
+            if last_key is None or last_key != key:
+                last_key = key
+            break
+
+    # Apply movement along last_key only
+    if last_key is not None:
+        dx, dy = pressed_keys[last_key]
+        # Reset last_key if key released
+        if not keys[last_key]:
+            last_key = None
 
     # move player at controlled rate
     if dx != 0 or dy != 0:
