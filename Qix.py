@@ -220,6 +220,12 @@ while running:
                 # start drawing trail
                 drawing = True
                 trail_cells = []
+                
+            if grid[player_y][player_x] == FILLED and grid[ny][nx] == EMPTY:
+                # start drawing trail
+                drawing = True
+                trail_cells = []
+
             # If drawing and moving onto Qix -> lose life
             if drawing and (ny, nx) == (qix_pos[0], qix_pos[1]):
                 lives -= 1
