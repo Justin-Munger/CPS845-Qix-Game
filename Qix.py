@@ -232,6 +232,12 @@ while running:
 
     keys = pygame.key.get_pressed()
 
+    # Defining the trail key
+    TRAIL_KEY = pygame.K_SPACE
+
+    # Inside main loop, after keys = pygame.key.get_pressed():
+    trail_pressed = keys[TRAIL_KEY]
+
     # Player movement with single-axis and last-key lock
     dx = dy = 0
     pressed_keys = {
@@ -260,7 +266,7 @@ while running:
         nx = player_x + dx
         ny = player_y + dy
         #if in_bounds(ny, nx) and (ny, nx) in player_perimeter:
-        if in_bounds(ny, nx) and ((ny, nx) in player_perimeter or grid[ny][nx] == EMPTY or grid[ny][nx] == TRAIL):
+        if in_bounds(ny, nx) and ((ny, nx) in player_perimeter or (trail_pressed and grid[ny][nx] == EMPTY) or grid[ny][nx] == TRAIL):
 
         #if in_bounds(ny, nx) and ((ny, nx) in player_perimeter or grid[ny][nx] in (EMPTY, BORDER)):
 
