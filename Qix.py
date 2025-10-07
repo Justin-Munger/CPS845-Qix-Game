@@ -37,7 +37,7 @@ trail_start_pos = (GRID_W//2, GRID_H-1)  # (y, x) where the trail began
 # === Game setup ===
 pygame.init()
 screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
-pygame.display.set_caption("Qix-like (simple)")
+pygame.display.set_caption("The Qix Game")
 clock = pygame.time.Clock()
 font = pygame.font.SysFont(None, 24)
 
@@ -181,6 +181,12 @@ def commit_trail_and_fill():
     if not trail_cells:
         return
 
+    if len(trail_cells) == 1:
+        y, x = trail_cells[0]
+        grid[y][x] = EMPTY
+        trail_cells.clear()
+        return  # single cell trail does nothing
+    
     # Treat trail as temporary barrier for flood-fill
     for (y, x) in trail_cells:
         grid[y][x] = FILLED  # mark trail as filled immediately
