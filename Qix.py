@@ -181,11 +181,20 @@ def commit_trail_and_fill():
     if not trail_cells:
         return
 
+    # If trail is just a single tile, check adjacent perimeter tiles
     if len(trail_cells) == 1:
         y, x = trail_cells[0]
-        grid[y][x] = EMPTY
-        trail_cells.clear()
-        return  # single cell trail does nothing
+        # Count adjacent tiles that are in the current perimeter
+        adjacent_count = 0
+        for dy, dx in ((0,1),(0,-1),(1,0),(-1,0)):
+            ny, nx = y + dy, x + dx
+            if (ny, nx) in player_perimeter:
+                adjacent_count += 1
+        if adjacent_count < 3:
+            # Single tile not connected enough then ignore
+            grid[y][x] = EMPTY
+            trail_cells.clear()
+            return
     
     # Treat trail as temporary barrier for flood-fill
     for (y, x) in trail_cells:
