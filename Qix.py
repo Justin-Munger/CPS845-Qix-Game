@@ -21,11 +21,12 @@ TRAIL = 3       # current trail being drawn
 
 # Colors
 COL_EMPTY = (10, 10, 40)
-COL_BORDER = (200, 200, 200)
+COL_BORDER = (40, 150, 40)
 COL_FILLED = (40, 150, 40)
 COL_TRAIL = (255, 200, 0)
 COL_PLAYER = (255, 255, 255)
 COL_QIX = (200, 50, 50)
+COL_PERIMETER = (200, 200, 200)
 
 # Player movement speed (tiles per move)
 PLAYER_SPEED = 1
@@ -110,7 +111,7 @@ def compute_player_perimeter():
                 for dy in (-1, 0, 1):
                     for dx in (-1, 0, 1):
                         ny, nx = y + dy, x + dx
-                        if in_bounds(ny, nx):
+                        if in_bounds(ny, nx) and grid[ny][nx] != EMPTY:
                             allowed.add((ny, nx))
     return allowed
 
@@ -253,7 +254,7 @@ while running:
         nx = player_x + dx
         ny = player_y + dy
         #if in_bounds(ny, nx) and (ny, nx) in player_perimeter:
-        if in_bounds(ny, nx) and ((ny, nx) in player_perimeter or grid[ny][nx] == EMPTY):
+        if in_bounds(ny, nx) and ((ny, nx) in player_perimeter or grid[ny][nx] == EMPTY or grid[ny][nx] == TRAIL):
 
         #if in_bounds(ny, nx) and ((ny, nx) in player_perimeter or grid[ny][nx] in (EMPTY, BORDER)):
 
@@ -286,6 +287,7 @@ while running:
                 if drawing:
                     if grid[player_y][player_x] == TRAIL:
                         # crossing own trail -> death
+                        print("Crossed own trail!")
                         lifeforce -= 1
                         reset_trail()
                         drawing = False
@@ -333,6 +335,11 @@ while running:
     for (y,x) in trail_cells:
         rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
         pygame.draw.rect(screen, COL_TRAIL, rect)
+
+    # draw perimeter outline
+    for (y,x) in player_perimeter:
+        rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
+        pygame.draw.rect(screen, COL_PERIMETER, rect, 1)
 
     # draw player
     pygame.draw.rect(screen, COL_PLAYER, pygame.Rect(player_x*TILE_SIZE, player_y*TILE_SIZE, TILE_SIZE, TILE_SIZE))
