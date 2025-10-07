@@ -114,6 +114,23 @@ def compute_player_perimeter():
                             allowed.add((ny, nx))
     return allowed
 
+def teleport_to_nearest_perimeter():
+    global player_x, player_y
+    if (player_y, player_x) in player_perimeter:
+        return  # player is fine
+
+    # Find the nearest perimeter tile using Manhattan distance
+    nearest = None
+    nearest_dist = float('inf')
+    for (py, px) in player_perimeter:
+        dist = abs(py - player_y) + abs(px - player_x)
+        if dist < nearest_dist:
+            nearest = (py, px)
+            nearest_dist = dist
+
+    if nearest:
+        player_y, player_x = nearest
+
 # Player starts at bottom-center border
 player_x = GRID_W//2
 player_y = GRID_H-1
@@ -183,6 +200,9 @@ def commit_trail_and_fill():
     trail_cells.clear()
     # dynamically recompute player perimeter
     player_perimeter = compute_player_perimeter()
+
+    teleport_to_nearest_perimeter()
+
 
 def reset_trail():
     global trail_cells
