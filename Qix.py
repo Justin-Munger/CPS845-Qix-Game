@@ -34,12 +34,17 @@ last_key = None  # "x" or "y" or None
 trail_start_pos = (GRID_W//2, GRID_H-1)  # (y, x) where the trail began
 
 
+
 # === Game setup ===
 pygame.init()
 screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
 pygame.display.set_caption("The Qix Game")
 clock = pygame.time.Clock()
 font = pygame.font.SysFont(None, 24)
+
+background_img = pygame.image.load("water_background.png").convert()
+land_img = pygame.image.load("land_texture.png").convert()
+
 
 # create grid and set borders
 grid = [[EMPTY for _ in range(GRID_W)] for _ in range(GRID_H)]
@@ -60,7 +65,8 @@ def draw_grid():
             rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
             val = grid[y][x]
             if val == EMPTY:
-                color = COL_EMPTY
+                #color = COL_EMPTY
+                continue  # skip drawing empty to show background
             elif val == BORDER:
                 color = COL_BORDER
             elif val == FILLED:
@@ -240,6 +246,7 @@ while running:
                 running = False
 
     keys = pygame.key.get_pressed()
+    
 
     # Defining the trail key
     TRAIL_KEY = pygame.K_SPACE
@@ -349,7 +356,8 @@ while running:
         
 
     # Draw
-    screen.fill((0,0,0))
+    #screen.fill((0,0,0))
+    screen.blit(background_img, (0, 0))
     draw_grid()
 
     # draw trail overlay (in case trail set)
@@ -369,7 +377,9 @@ while running:
 
     # HUD
     txt = font.render(f"Lifeforce: {lifeforce}  Score: {score}  Filled: {int(percent_filled()*100)}%", True, (255,255,255))
+
     screen.blit(txt, (10, 10))
+    
 
     pygame.display.flip()
 
