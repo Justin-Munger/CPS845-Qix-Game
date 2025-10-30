@@ -64,16 +64,20 @@ def draw_grid():
         for x in range(GRID_W):
             rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
             val = grid[y][x]
-            if val == EMPTY:
-                #color = COL_EMPTY
-                continue  # skip drawing empty to show background
-            elif val == BORDER:
-                color = COL_BORDER
+
+            if val == BORDER:
+                # Draw the corresponding part of the land texture
+                tx = (x * TILE_SIZE) % land_img.get_width()
+                ty = (y * TILE_SIZE) % land_img.get_height()
+                screen.blit(land_img, rect, pygame.Rect(tx, ty, TILE_SIZE, TILE_SIZE))
             elif val == FILLED:
-                color = COL_FILLED
+                # Draw the corresponding part of the land texture
+                tx = (x * TILE_SIZE) % land_img.get_width()
+                ty = (y * TILE_SIZE) % land_img.get_height()
+                screen.blit(land_img, rect, pygame.Rect(tx, ty, TILE_SIZE, TILE_SIZE))
+
             elif val == TRAIL:
-                color = COL_TRAIL
-            pygame.draw.rect(screen, color, rect)
+                pygame.draw.rect(screen, COL_TRAIL, rect)
 
 def grid_fill_from_points(starts):
     """Return set of tiles reachable from any start tile via 4-neighbor moves across tiles that are not FILLED or BORDER."""
