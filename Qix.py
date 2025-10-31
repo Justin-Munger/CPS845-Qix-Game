@@ -37,13 +37,17 @@ trail_start_pos = (GRID_W//2, GRID_H-1)  # (y, x) where the trail began
 
 # === Game setup ===
 pygame.init()
+#screen = pygame.display.set_mode((SCREEN_W + 16, SCREEN_H + 16))
 screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
 pygame.display.set_caption("The Qix Game")
 clock = pygame.time.Clock()
 font = pygame.font.SysFont(None, 24)
 
 background_img = pygame.image.load("water_background.png").convert()
-land_img = pygame.image.load("land_texture.png").convert()
+land_img = pygame.image.load("grass.png").convert()
+pixel_rock = pygame.image.load("larger_rock.png").convert_alpha()
+player_image = pygame.image.load("purple_player.png").convert_alpha()
+qix_image = pygame.image.load("octopus.png").convert_alpha()
 
 
 # create grid and set borders
@@ -56,6 +60,7 @@ for y in range(GRID_H):
     grid[y][GRID_W-1] = BORDER
 
 # helper functions
+# everything with grid_w and grid_h will need to be redifned if width and length is to be increased
 def in_bounds(y, x):
     return 0 <= x < GRID_W and 0 <= y < GRID_H
 
@@ -361,6 +366,7 @@ while running:
 
     # Draw
     #screen.fill((0,0,0))
+    #make it (8,8) if need to centre background on bigger scale to fit player
     screen.blit(background_img, (0, 0))
     draw_grid()
 
@@ -369,20 +375,31 @@ while running:
         rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
         pygame.draw.rect(screen, COL_TRAIL, rect)
 
+    #(x * tilesize - 1 or 2) is used to centre larger player and rock images on 8x8 tile
+
     # draw perimeter outline
+    for (y, x) in player_perimeter:
+        pos = ((x * TILE_SIZE) -1, (y * TILE_SIZE) -1)
+        screen.blit(pixel_rock, pos)
+
+    '''
     for (y,x) in player_perimeter:
         rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
         pygame.draw.rect(screen, COL_PERIMETER, rect, 1)
+    '''
 
     # draw player
-    pygame.draw.rect(screen, COL_PLAYER, pygame.Rect(player_x*TILE_SIZE, player_y*TILE_SIZE, TILE_SIZE, TILE_SIZE))
+    #pygame.draw.rect(screen, COL_PLAYER, pygame.Rect(player_x*TILE_SIZE, player_y*TILE_SIZE, TILE_SIZE, TILE_SIZE))
+    screen.blit(player_image, ((player_x * TILE_SIZE) - 2, (player_y * TILE_SIZE) - 2))
+
     # draw qix
-    pygame.draw.rect(screen, COL_QIX, pygame.Rect(qix_pos[1]*TILE_SIZE, qix_pos[0]*TILE_SIZE, TILE_SIZE, TILE_SIZE))
+    #pygame.draw.rect(screen, COL_QIX, pygame.Rect(qix_pos[1]*TILE_SIZE, qix_pos[0]*TILE_SIZE, TILE_SIZE, TILE_SIZE))
+    screen.blit(qix_image, ((qix_pos[1] * TILE_SIZE) - 2, (qix_pos[0] * TILE_SIZE) - 2))
 
     # HUD
     txt = font.render(f"Lifeforce: {lifeforce}  Score: {score}  Filled: {int(percent_filled()*100)}%", True, (255,255,255))
 
-    screen.blit(txt, (10, 10))
+    screen.blit(txt, (0, 0))
     
 
     pygame.display.flip()
