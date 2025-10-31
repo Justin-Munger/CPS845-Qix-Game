@@ -2,6 +2,7 @@
 import pygame
 import random
 from collections import deque
+import math
 
 # === Config ===
 TILE_SIZE = 8
@@ -33,7 +34,17 @@ PLAYER_SPEED = 1
 last_key = None  # "x" or "y" or None
 trail_start_pos = (GRID_W//2, GRID_H-1)  # (y, x) where the trail began
 
+# === Sparx Settings ===
+SPARX_SPEED = 6   # frames between moves (higher = slower)
+sparx_timer = 0
+sparx_list = []
 
+# place opposite side of player (for now top center)
+sparx_y, sparx_x = 0, GRID_W // 2
+sparx_dir = (0, 1)  # move along border to the right initially
+# visual (for smooth movement)
+sparx_vis_x = sparx_x * TILE_SIZE
+sparx_vis_y = sparx_y * TILE_SIZE
 
 # === Game setup ===
 pygame.init()
@@ -147,6 +158,29 @@ def teleport_to_nearest_perimeter():
     if nearest:
         player_y, player_x = nearest
 
+def init_sparx():
+    global sparx_list, ordered_perimeter
+    sparx_list = []
+    if not ordered_perimeter:
+        return
+
+    # choose opposite x coordinate on top/bottom border relative to player
+    target_y = 0 if player_y > GRID_H // 2 else GRID_H - 1
+    target_x = GRID_W - 1 - player_x
+
+    # find nearest tile on ordered_perimeter
+    best_i = min(range(len(ordered_perimeter)),
+                 key=lambda i: abs(ordered_perimeter[i][0] - target_y) + abs(ordered_perimeter[i][1] - target_x))
+    start_pos = ordered_perimeter[best_i]
+
+    sparx_list.append({
+        "pos": start_pos,
+        "dir": 1,                # 1 clockwise, -1 counterclockwise
+        "idx": best_i,
+        "vis_pos": [start_pos[1]*TILE_SIZE, start_pos[0]*TILE_SIZE]
+    })
+
+
 # Player starts at bottom-center border
 player_x = GRID_W//2
 player_y = GRID_H-1
@@ -157,6 +191,7 @@ drawing = False
 trail_cells = []  # list of (y,x) in trail order
 # global variable storing allowed perimeter tiles
 player_perimeter = compute_player_perimeter()
+
 
 # Qix enemy - a single moving point
 qix_pos = [GRID_H//3, GRID_W//3]
@@ -190,6 +225,65 @@ def move_qix():
     # final move: only apply move if empty or trail (do not enter FILLED/BORDER)
     if in_bounds(ny, nx) and grid[ny][nx] in (EMPTY, TRAIL):
         qix_pos[0], qix_pos[1] = ny, nx
+
+def move_sparx():
+    global sparx_list, lifeforce, drawing, player_x, player_y, ordered_perimeter
+
+    if not ordered_perimeter:
+        return
+
+    L = len(ordered_perimeter)
+    for sparx in sparx_list:
+        # advance index by dir (one step along the ordered path)
+        idx = (sparx["idx"] + sparx["dir"]) % L
+        sparx["idx"] = idx
+        next_pos = ordered_perimeter[idx]
+        sparx["pos"] = next_pos
+
+        # collisions
+        if (player_y, player_x) == next_pos:
+            lifeforce -= 1
+            print("Hit by Sparx!")
+            teleport_to_nearest_perimeter()
+            # reverse direction for interest
+            sparx["dir"] *= -1
+
+        if drawing and next_pos in trail_cells:
+            print("Sparx hit trail! Trail cancelled.")
+            lifeforce -= 1
+            reset_trail()
+            drawing = False
+            teleport_to_nearest_perimeter()
+
+def build_ordered_perimeter(perim_set):
+    """Return a stable ordered list of perimeter tiles.
+    Uses angle around centroid to provide a circular ordering.
+    """
+    if not perim_set:
+        return []
+
+    pts = list(perim_set)
+    n = len(pts)
+    cy = sum(y for y, x in pts) / n
+    cx = sum(x for y, x in pts) / n
+
+    # sort by angle around centroid (y first, x second)
+    pts.sort(key=lambda p: math.atan2(p[0] - cy, p[1] - cx))
+    return pts
+
+#this may be causing the teleport issues with sparx
+def remap_sparx_indices():
+    """When ordered_perimeter changes, map each sparx to nearest index in the new path."""
+    global sparx_list, ordered_perimeter
+    if not ordered_perimeter:
+        return
+    for sparx in sparx_list:
+        sy, sx = sparx["pos"]
+        # find nearest tile index
+        best_i = min(range(len(ordered_perimeter)),
+                     key=lambda i: abs(ordered_perimeter[i][0] - sy) + abs(ordered_perimeter[i][1] - sx))
+        sparx["idx"] = best_i
+        sparx["pos"] = ordered_perimeter[best_i]
 
 def commit_trail_and_fill():
     global score, player_perimeter
@@ -231,7 +325,8 @@ def commit_trail_and_fill():
     trail_cells.clear()
     # dynamically recompute player perimeter
     player_perimeter = compute_player_perimeter()
-
+    ordered_perimeter = build_ordered_perimeter(player_perimeter)
+    remap_sparx_indices()
     teleport_to_nearest_perimeter()
 
 
@@ -241,6 +336,10 @@ def reset_trail():
         if grid[y][x] == TRAIL:
             grid[y][x] = EMPTY
     trail_cells = []
+
+# Initialize Sparx on the opposite side of the player
+ordered_perimeter = build_ordered_perimeter(player_perimeter)
+init_sparx()
 
 # Main loop
 running = True
@@ -343,6 +442,8 @@ while running:
             if drawing and grid[player_y][player_x] == BORDER:
                 commit_trail_and_fill()
                 player_perimeter = compute_player_perimeter()
+                ordered_perimeter = build_ordered_perimeter(player_perimeter)
+                remap_sparx_indices()
                 trail_cells = []
                 drawing = False
 
@@ -350,12 +451,22 @@ while running:
             if drawing and grid[player_y][player_x] == FILLED:
                 commit_trail_and_fill()
                 player_perimeter = compute_player_perimeter()
+                ordered_perimeter = build_ordered_perimeter(player_perimeter)
+                remap_sparx_indices()
                 trail_cells = []
                 drawing = False
 
     # Move qix
     move_qix()
-
+    
+    # === Move Sparx slowly ===
+    sparx_timer += 1
+    if sparx_timer >= SPARX_SPEED:
+        #print("Moving Sparx")
+        move_sparx()
+        sparx_timer = 0
+    
+    #move_sparx()
     # Collisions: qix intersects trail -> lose life
     if tuple(qix_pos) in trail_cells:
         lifeforce -= 1
@@ -400,7 +511,12 @@ while running:
     txt = font.render(f"Lifeforce: {lifeforce}  Score: {score}  Filled: {int(percent_filled()*100)}%", True, (255,255,255))
 
     screen.blit(txt, (0, 0))
-    
+    for sparx in sparx_list:
+        target_x = sparx["pos"][1] * TILE_SIZE
+        target_y = sparx["pos"][0] * TILE_SIZE
+        sparx["vis_pos"][0] += (target_x - sparx["vis_pos"][0]) * 0.2
+        sparx["vis_pos"][1] += (target_y - sparx["vis_pos"][1]) * 0.2
+        pygame.draw.circle(screen, (255, 0, 0), (int(sparx["vis_pos"][0]) +5, int(sparx["vis_pos"][1]) +5), 4)
 
     pygame.display.flip()
 
