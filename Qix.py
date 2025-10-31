@@ -390,11 +390,11 @@ while running:
 
     # draw player
     #pygame.draw.rect(screen, COL_PLAYER, pygame.Rect(player_x*TILE_SIZE, player_y*TILE_SIZE, TILE_SIZE, TILE_SIZE))
-    screen.blit(player_image, ((player_x * TILE_SIZE) - 2, (player_y * TILE_SIZE) - 2))
+    screen.blit(player_image, ((player_x * TILE_SIZE) - 3, (player_y * TILE_SIZE) - 3))
 
     # draw qix
     #pygame.draw.rect(screen, COL_QIX, pygame.Rect(qix_pos[1]*TILE_SIZE, qix_pos[0]*TILE_SIZE, TILE_SIZE, TILE_SIZE))
-    screen.blit(qix_image, ((qix_pos[1] * TILE_SIZE) - 2, (qix_pos[0] * TILE_SIZE) - 2))
+    screen.blit(qix_image, ((qix_pos[1] * TILE_SIZE) - 4, (qix_pos[0] * TILE_SIZE) - 4))
 
     # HUD
     txt = font.render(f"Lifeforce: {lifeforce}  Score: {score}  Filled: {int(percent_filled()*100)}%", True, (255,255,255))
