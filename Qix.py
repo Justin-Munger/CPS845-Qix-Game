@@ -263,20 +263,39 @@ def move_sparx():
             teleport_to_nearest_perimeter()
 
 def build_ordered_perimeter(perim_set):
-    """Return a stable ordered list of perimeter tiles.
-    Uses angle around centroid to provide a circular ordering.
-    """
+    """Return a contiguous ordered list of perimeter tiles by walking around it."""
     if not perim_set:
         return []
 
-    pts = list(perim_set)
-    n = len(pts)
-    cy = sum(y for y, x in pts) / n
-    cx = sum(x for y, x in pts) / n
+    perim = set(perim_set)
+    ordered = []
 
-    # sort by angle around centroid (y first, x second)
-    pts.sort(key=lambda p: math.atan2(p[0] - cy, p[1] - cx))
-    return pts
+    # Start from the top-leftmost tile (deterministic)
+    start = min(perim, key=lambda p: (p[0], p[1]))
+    current = start
+    prev = None
+    ordered.append(current)
+
+    # Directions (clockwise)
+    dirs = [(-1,0), (0,1), (1,0), (0,-1)]
+
+    while True:
+        # find next neighbor that is in perim
+        for dy, dx in dirs:
+            ny, nx = current[0] + dy, current[1] + dx
+            if (ny, nx) in perim and (ny, nx) != prev:
+                prev, current = current, (ny, nx)
+                ordered.append(current)
+                break
+        else:
+            # no unvisited neighbor → stop
+            break
+
+        # stop if we’ve looped back
+        if current == start:
+            break
+
+    return ordered
 
 #this may be causing the teleport issues with sparx
 def remap_sparx_indices():
