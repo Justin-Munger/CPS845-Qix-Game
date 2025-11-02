@@ -34,10 +34,15 @@ PLAYER_SPEED = 1
 last_key = None  # "x" or "y" or None
 trail_start_pos = (GRID_W//2, GRID_H-1)  # (y, x) where the trail began
 
+# === Qix Settings ===
+QIX_SPEED = 3   # frames between moves (higher = slower)
+qix_timer = 0
+
 # === Sparx Settings ===
-SPARX_SPEED = 6   # frames between moves (higher = slower)
+SPARX_SPEED = 4   # frames between moves (higher = slower)
 sparx_timer = 0
 sparx_list = []
+
 
 # place opposite side of player (for now top center)
 sparx_y, sparx_x = 0, GRID_W // 2
@@ -196,6 +201,8 @@ player_perimeter = compute_player_perimeter()
 # Qix enemy - a single moving point
 qix_pos = [GRID_H//3, GRID_W//3]
 qix_vel = [1, 1]
+qix_vis_pos = [qix_pos[1] * TILE_SIZE, qix_pos[0] * TILE_SIZE]  # [x, y] in pixels
+
 
 def move_qix():
     # simple random-walk with occasional random direction tweak
@@ -457,7 +464,14 @@ while running:
                 drawing = False
 
     # Move qix
-    move_qix()
+    #move_qix()
+
+    # === Move Qix slowly ===
+    qix_timer += 1
+    if qix_timer >= QIX_SPEED:
+        #print("Moving Qix")
+        move_qix()
+        qix_timer = 0
     
     # === Move Sparx slowly ===
     sparx_timer += 1
@@ -505,7 +519,15 @@ while running:
 
     # draw qix
     #pygame.draw.rect(screen, COL_QIX, pygame.Rect(qix_pos[1]*TILE_SIZE, qix_pos[0]*TILE_SIZE, TILE_SIZE, TILE_SIZE))
-    screen.blit(qix_image, ((qix_pos[1] * TILE_SIZE) - 4, (qix_pos[0] * TILE_SIZE) - 4))
+        # === Smooth Qix movement ===
+    target_x = qix_pos[1] * TILE_SIZE
+    target_y = qix_pos[0] * TILE_SIZE
+    # Interpolate toward target (0.2 controls smoothness; smaller = slower, smoother)
+    qix_vis_pos[0] += (target_x - qix_vis_pos[0]) * 0.3
+    qix_vis_pos[1] += (target_y - qix_vis_pos[1]) * 0.3
+
+    # Draw Qix at interpolated position
+    screen.blit(qix_image, (qix_vis_pos[0] - 4, qix_vis_pos[1] - 4))
 
     # HUD
     txt = font.render(f"Lifeforce: {lifeforce}  Score: {score}  Filled: {int(percent_filled()*100)}%", True, (255,255,255))
