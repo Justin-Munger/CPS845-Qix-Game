@@ -36,11 +36,11 @@ trail_start_pos = (GRID_W//2, GRID_H-1)  # (y, x) where the trail began
 
 # === Qix Settings ===
 QIX_SPEED = 3   # frames between moves (higher = slower)
-qix_timer = 0
+qix_timer = 0   # timer for Qix movement
 
 # === Sparx Settings ===
 SPARX_SPEED = 4   # frames between moves (higher = slower)
-sparx_timer = 0
+sparx_timer = 0   # timer for Sparx movement
 sparx_list = []
 
 
@@ -251,7 +251,7 @@ def move_sparx():
         if (player_y, player_x) == next_pos:
             lifeforce -= 1
             print("Hit by Sparx!")
-            teleport_to_nearest_perimeter()
+            teleport_to_nearest_perimeter() #not needed
             # reverse direction for interest
             sparx["dir"] *= -1
 
@@ -351,9 +351,12 @@ def commit_trail_and_fill():
     trail_cells.clear()
     # dynamically recompute player perimeter
     player_perimeter = compute_player_perimeter()
+    #fix redundancies here
     ordered_perimeter = build_ordered_perimeter(player_perimeter)
     remap_sparx_indices()
-    teleport_to_nearest_perimeter()
+    #this may help reduce computation, in the future use trail_start_pos
+    if (player_x, player_y) not in player_perimeter:
+        teleport_to_nearest_perimeter()
 
 
 def reset_trail():
