@@ -251,16 +251,15 @@ def move_sparx():
         if (player_y, player_x) == next_pos:
             lifeforce -= 1
             print("Hit by Sparx!")
-            teleport_to_nearest_perimeter() #not needed
             # reverse direction for interest
             sparx["dir"] *= -1
 
-        if drawing and next_pos in trail_cells:
+        if drawing and next_pos == trail_start_pos:
             print("Sparx hit trail! Trail cancelled.")
             lifeforce -= 1
             reset_trail()
             drawing = False
-            teleport_to_nearest_perimeter()
+            player_y, player_x = trail_start_pos
 
 def build_ordered_perimeter(perim_set):
     """Return a contiguous ordered list of perimeter tiles by walking around it."""
