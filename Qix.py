@@ -191,7 +191,6 @@ player_x = GRID_W//2
 player_y = GRID_H-1
 on_border = True
 lifeforce = 9
-score = 0
 drawing = False
 trail_cells = []  # list of (y,x) in trail order
 # global variable storing allowed perimeter tiles
@@ -311,7 +310,7 @@ def remap_sparx_indices():
         sparx["pos"] = ordered_perimeter[best_i]
 
 def commit_trail_and_fill():
-    global score, player_perimeter
+    global player_perimeter
     if not trail_cells:
         return
 
@@ -324,7 +323,7 @@ def commit_trail_and_fill():
             ny, nx = y + dy, x + dx
             if (ny, nx) in player_perimeter:
                 adjacent_count += 1
-        if adjacent_count < 3:
+        if adjacent_count < 2:
             # Single tile not connected enough then ignore
             grid[y][x] = EMPTY
             trail_cells.clear()
@@ -346,7 +345,6 @@ def commit_trail_and_fill():
                 newly_filled += 1
 
     # Trail is already marked FILLED
-    score += newly_filled * 10
     trail_cells.clear()
     # dynamically recompute player perimeter
     player_perimeter = compute_player_perimeter()
@@ -560,10 +558,10 @@ while running:
         #pygame.draw.circle(screen, (255, 0, 0), (int(sparx["vis_pos"][0]) +5, int(sparx["vis_pos"][1]) +5), 4)
     
     # HUD
-    txt = font.render(f"Lifeforce: {lifeforce}  Score: {score}  Filled: {int(percent_filled()*100)}%", True, (255,255,255))
+    txt = font.render(f"Lifeforce: {lifeforce} Filled: {int(percent_filled()*100)}%", True, (255,255,255))
 
     screen.blit(txt, (0, 0))
-    
+
     pygame.display.flip()
 
     # check game over / win
