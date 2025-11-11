@@ -57,7 +57,7 @@ pygame.init()
 screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
 pygame.display.set_caption("The Qix Game")
 clock = pygame.time.Clock()
-font = pygame.font.SysFont(None, 24)
+font = pygame.font.SysFont("consolas", 20, bold=True)
 
 background_img = pygame.image.load("water.png").convert()
 land_img = pygame.image.load("grass.png").convert()
