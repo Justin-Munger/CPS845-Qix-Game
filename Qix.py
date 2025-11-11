@@ -35,11 +35,11 @@ last_key = None  # "x" or "y" or None
 trail_start_pos = (GRID_W//2, GRID_H-1)  # (y, x) where the trail began
 
 # === Qix Settings ===
-QIX_SPEED = 3   # frames between moves (higher = slower)
+QIX_SPEED = 4   # frames between moves (higher = slower)
 qix_timer = 0   # timer for Qix movement
 
 # === Sparx Settings ===
-SPARX_SPEED = 4   # frames between moves (higher = slower)
+SPARX_SPEED = 5   # frames between moves (higher = slower)
 sparx_timer = 0   # timer for Sparx movement
 sparx_list = []
 
@@ -59,12 +59,12 @@ pygame.display.set_caption("The Qix Game")
 clock = pygame.time.Clock()
 font = pygame.font.SysFont(None, 24)
 
-background_img = pygame.image.load("water_background.png").convert()
+background_img = pygame.image.load("water.png").convert()
 land_img = pygame.image.load("grass.png").convert()
-pixel_rock = pygame.image.load("larger_rock.png").convert_alpha()
-player_image = pygame.image.load("purple_player.png").convert_alpha()
+pixel_rock = pygame.image.load("rock.png").convert_alpha()
+player_image = pygame.image.load("bird.png").convert_alpha()
 qix_image = pygame.image.load("octopus.png").convert_alpha()
-
+sparx_image = pygame.image.load("starfish.png").convert_alpha()
 
 # create grid and set borders
 grid = [[EMPTY for _ in range(GRID_W)] for _ in range(GRID_H)]
@@ -550,17 +550,20 @@ while running:
     # Draw Qix at interpolated position
     screen.blit(qix_image, (qix_vis_pos[0] - 4, qix_vis_pos[1] - 4))
 
-    # HUD
-    txt = font.render(f"Lifeforce: {lifeforce}  Score: {score}  Filled: {int(percent_filled()*100)}%", True, (255,255,255))
 
-    screen.blit(txt, (0, 0))
     for sparx in sparx_list:
         target_x = sparx["pos"][1] * TILE_SIZE
         target_y = sparx["pos"][0] * TILE_SIZE
         sparx["vis_pos"][0] += (target_x - sparx["vis_pos"][0]) * 0.2
         sparx["vis_pos"][1] += (target_y - sparx["vis_pos"][1]) * 0.2
-        pygame.draw.circle(screen, (255, 0, 0), (int(sparx["vis_pos"][0]) +5, int(sparx["vis_pos"][1]) +5), 4)
+        screen.blit(sparx_image, (int(sparx["vis_pos"][0] - 3), int(sparx["vis_pos"][1] - 4)))
+        #pygame.draw.circle(screen, (255, 0, 0), (int(sparx["vis_pos"][0]) +5, int(sparx["vis_pos"][1]) +5), 4)
+    
+    # HUD
+    txt = font.render(f"Lifeforce: {lifeforce}  Score: {score}  Filled: {int(percent_filled()*100)}%", True, (255,255,255))
 
+    screen.blit(txt, (0, 0))
+    
     pygame.display.flip()
 
     # check game over / win
