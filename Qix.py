@@ -185,6 +185,19 @@ def init_sparx():
         "vis_pos": [start_pos[1]*TILE_SIZE, start_pos[0]*TILE_SIZE]
     })
 
+    # --- Second Sparx (counterclockwise) ---
+
+    # Find opposite point on the perimeter
+    # opposite_i = (best_i + len(ordered_perimeter)//2) % len(ordered_perimeter)
+    # opposite_pos = ordered_perimeter[opposite_i]
+
+    sparx_list.append({
+        "pos": start_pos,
+        "dir": -1,  # counterclockwise
+        "idx": best_i,
+        "vis_pos": [start_pos[1]*TILE_SIZE, start_pos[0]*TILE_SIZE]
+    })
+
 
 # Player starts at bottom-center border
 player_x = GRID_W//2
