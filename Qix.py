@@ -4,6 +4,15 @@ import random
 from collections import deque
 import math
 
+
+# Menu 
+
+STATE_MENU = 0
+STATE_PLAYING = 1
+STATE_GAMEOVER = 2
+
+game_state = STATE_MENU
+
 # === Config ===
 TILE_SIZE = 8
 GRID_W = 80   # number of tiles across
