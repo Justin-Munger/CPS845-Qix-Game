@@ -52,6 +52,9 @@ SPARX_SPEED = 5   # frames between moves (higher = slower)
 sparx_timer = 0   # timer for Sparx movement
 sparx_list = []
 
+# === Player Settings ===
+PLAYER_SPEED = 2   # frames between moves (higher = slower)
+player_timer = 0
 
 # place opposite side of player (for now top center)
 sparx_y, sparx_x = 0, GRID_W // 2
@@ -59,6 +62,10 @@ sparx_dir = (0, 1)  # move along border to the right initially
 # visual (for smooth movement)
 sparx_vis_x = sparx_x * TILE_SIZE
 sparx_vis_y = sparx_y * TILE_SIZE
+
+TRAIL_SPEED = 2  # frames between trail additions (higher = slower)
+trail_timer = 0
+trail_draw_count = 0  # how many trail tiles to draw (for animation)
 
 # === Game setup ===
 pygame.init()
@@ -191,7 +198,8 @@ def init_sparx():
         "pos": start_pos,
         "dir": 1,                # 1 clockwise, -1 counterclockwise
         "idx": best_i,
-        "vis_pos": [start_pos[1]*TILE_SIZE, start_pos[0]*TILE_SIZE]
+        "vis_pos": [start_pos[1]*TILE_SIZE, start_pos[0]*TILE_SIZE],
+        "cooldown": 0
     })
 
     # --- Second Sparx (counterclockwise) ---
@@ -204,7 +212,8 @@ def init_sparx():
         "pos": start_pos,
         "dir": -1,  # counterclockwise
         "idx": best_i,
-        "vis_pos": [start_pos[1]*TILE_SIZE, start_pos[0]*TILE_SIZE]
+        "vis_pos": [start_pos[1]*TILE_SIZE, start_pos[0]*TILE_SIZE],
+        "cooldown": 0
     })
 
 
@@ -218,6 +227,9 @@ trail_cells = []  # list of (y,x) in trail order
 # global variable storing allowed perimeter tiles
 player_perimeter = compute_player_perimeter()
 
+# Smooth visual position
+player_vis_x = player_x * TILE_SIZE
+player_vis_y = player_y * TILE_SIZE
 
 # Qix enemy - a single moving point
 qix_pos = [GRID_H//3, GRID_W//3]
@@ -254,28 +266,83 @@ def move_qix():
     if in_bounds(ny, nx) and grid[ny][nx] in (EMPTY, TRAIL):
         qix_pos[0], qix_pos[1] = ny, nx
 
+
+def player_crossed(old, new, player):
+    """
+    Detects if the player passed through the old->new segment.
+    Works for grid-based games (horizontal/vertical moves).
+    """
+    oy, ox = old
+    ny, nx = new
+    py, px = player
+
+    # Horizontal movement
+    if oy == ny == py:
+        return (ox < px < nx) or (nx < px < ox)
+
+    # Vertical movement
+    if ox == nx == px:
+        return (oy < py < ny) or (ny < py < oy)
+
+    # diagonal should never happen in Qix-style sparx movement
+    return False
+
 def move_sparx():
-    global sparx_list, lifeforce, drawing, player_x, player_y, ordered_perimeter
+    global sparx_list, lifeforce, drawing, player_x, player_y, ordered_perimeter, trail_start_pos
 
     if not ordered_perimeter:
         return
 
     L = len(ordered_perimeter)
+
     for sparx in sparx_list:
-        # advance index by dir (one step along the ordered path)
+
+        # --- reduce cooldown timer ---
+        if sparx["cooldown"] > 0:
+            sparx["cooldown"] -= 1
+
+        # 1. Store old position
+        old_pos = sparx["pos"]
+
+        # 2. Move 1 step along ordered path
         idx = (sparx["idx"] + sparx["dir"]) % L
         sparx["idx"] = idx
-        next_pos = ordered_perimeter[idx]
-        sparx["pos"] = next_pos
+        new_pos = ordered_perimeter[idx]
+        sparx["pos"] = new_pos
 
-        # collisions
-        if (player_y, player_x) == next_pos:
-            lifeforce -= 1
-            print("Hit by Sparx!")
-            # reverse direction for interest
-            sparx["dir"] *= -1
+        # ==========================================================
+        # 3. COLLISION CHECKS (all wrapped behind cooldown)
+        # ==========================================================
+        if sparx["cooldown"] == 0:
 
-        if drawing and next_pos == trail_start_pos:
+            # A. Player is exactly on new tile
+            if (player_y, player_x) == new_pos:
+                lifeforce -= 1
+                print("Hit by Sparx!")
+                sparx["dir"] *= -1
+                sparx["cooldown"] = 2   # 2-frame invulnerability
+                continue
+
+            # B. Player is exactly on old tile
+            if (player_y, player_x) == old_pos:
+                lifeforce -= 1
+                print("Hit by Sparx (cross path)!")
+                sparx["dir"] *= -1
+                sparx["cooldown"] = 2
+                continue
+
+            # C. Player crossed through segment old → new
+            if player_crossed(old_pos, new_pos, (player_y, player_x)):
+                lifeforce -= 1
+                print("Hit by Sparx (mid-path)!")
+                sparx["dir"] *= -1
+                sparx["cooldown"] = 2
+                continue
+
+        # ==========================================================
+        # 4. TRAIL COLLISION (still instant — normal Qix behavior)
+        # ==========================================================
+        if drawing and new_pos == trail_start_pos:
             print("Sparx hit trail! Trail cancelled.")
             lifeforce -= 1
             reset_trail()
@@ -433,6 +500,13 @@ while running:
         if not keys[last_key]:
             last_key = None
 
+    # === Move Player slowly ===
+    player_timer += 1
+    if player_timer < PLAYER_SPEED:
+        dx = dy = 0   # Prevent movement this frame
+    else:
+        player_timer = 0
+
     # move player at controlled rate
     if dx != 0 or dy != 0:
         nx = player_x + dx
@@ -536,8 +610,23 @@ while running:
     screen.blit(background_img, (0, 0))
     draw_grid()
 
+    '''
     # draw trail overlay (in case trail set)
+    trail_timer += 1
+    if trail_timer > TRAIL_SPEED:
+        for (y,x) in trail_cells:
+            rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
+            pygame.draw.rect(screen, COL_TRAIL, rect)
+        trail_timer = 0
+    '''
+    '''
     for (y,x) in trail_cells:
+            rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
+            pygame.draw.rect(screen, COL_TRAIL, rect)
+    '''
+
+    # draw trail
+    for y, x in trail_cells:  # skip the first tile
         rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
         pygame.draw.rect(screen, COL_TRAIL, rect)
 
@@ -556,7 +645,9 @@ while running:
 
     # draw player
     #pygame.draw.rect(screen, COL_PLAYER, pygame.Rect(player_x*TILE_SIZE, player_y*TILE_SIZE, TILE_SIZE, TILE_SIZE))
-    screen.blit(player_image, ((player_x * TILE_SIZE) - 3, (player_y * TILE_SIZE) - 3))
+    player_vis_x += (player_x * TILE_SIZE - player_vis_x) * 0.6
+    player_vis_y += (player_y * TILE_SIZE - player_vis_y) * 0.6
+    screen.blit(player_image, ((player_vis_x) - 3, (player_vis_y) - 3))
 
     # draw qix
     #pygame.draw.rect(screen, COL_QIX, pygame.Rect(qix_pos[1]*TILE_SIZE, qix_pos[0]*TILE_SIZE, TILE_SIZE, TILE_SIZE))
