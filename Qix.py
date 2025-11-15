@@ -53,7 +53,7 @@ sparx_timer = 0   # timer for Sparx movement
 sparx_list = []
 
 # === Player Settings ===
-PLAYER_SPEED = 2   # frames between moves (higher = slower)
+PLAYER_SPEED = 3   # frames between moves (higher = slower)
 player_timer = 0
 
 # place opposite side of player (for now top center)
@@ -70,10 +70,10 @@ trail_draw_count = 0  # how many trail tiles to draw (for animation)
 # === Game setup ===
 pygame.init()
 #screen = pygame.display.set_mode((SCREEN_W + 16, SCREEN_H + 16))
-screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+screen = pygame.display.set_mode((SCREEN_W, SCREEN_H +20))
 pygame.display.set_caption("The Qix Game")
 clock = pygame.time.Clock()
-font = pygame.font.SysFont("consolas", 20, bold=True)
+font = pygame.font.SysFont("consolas", 22, bold=True)
 
 background_img = pygame.image.load("water.png").convert()
 land_img = pygame.image.load("grass.png").convert()
@@ -113,8 +113,17 @@ def draw_grid():
                 ty = (y * TILE_SIZE) % land_img.get_height()
                 screen.blit(land_img, rect, pygame.Rect(tx, ty, TILE_SIZE, TILE_SIZE))
 
-            elif val == TRAIL:
-                pygame.draw.rect(screen, COL_TRAIL, rect)
+            # elif val == TRAIL:
+                # pygame.draw.rect(screen, COL_TRAIL, rect)
+    '''        
+    for y in range(GRID_H, GRID_H + 20, 1):
+        for x in range(GRID_W):
+                # Draw the corresponding part of the water texture
+                tx = (x * TILE_SIZE) % land_img.get_width()
+                ty = (y * TILE_SIZE) % land_img.get_height()
+                screen.blit(land_img, (x*TILE_SIZE, y*TILE_SIZE), pygame.Rect(tx, ty, TILE_SIZE, TILE_SIZE))
+    '''
+    screen.blit(land_img, (0, SCREEN_H), pygame.Rect(0, SCREEN_H, SCREEN_W, 20))
 
 def grid_fill_from_points(starts):
     """Return set of tiles reachable from any start tile via 4-neighbor moves across tiles that are not FILLED or BORDER."""
@@ -320,7 +329,7 @@ def move_sparx():
                 lifeforce -= 1
                 print("Hit by Sparx!")
                 sparx["dir"] *= -1
-                sparx["cooldown"] = 2   # 2-frame invulnerability
+                sparx["cooldown"] = 3   # 3-frame invulnerability
                 continue
 
             # B. Player is exactly on old tile
@@ -328,7 +337,7 @@ def move_sparx():
                 lifeforce -= 1
                 print("Hit by Sparx (cross path)!")
                 sparx["dir"] *= -1
-                sparx["cooldown"] = 2
+                sparx["cooldown"] = 3
                 continue
 
             # C. Player crossed through segment old → new
@@ -336,7 +345,7 @@ def move_sparx():
                 lifeforce -= 1
                 print("Hit by Sparx (mid-path)!")
                 sparx["dir"] *= -1
-                sparx["cooldown"] = 2
+                sparx["cooldown"] = 3
                 continue
 
         # ==========================================================
@@ -405,6 +414,7 @@ def commit_trail_and_fill():
 
     # If trail is just a single tile, check adjacent perimeter tiles
     if len(trail_cells) == 1:
+        print("Single-tile")
         y, x = trail_cells[0]
         # Count adjacent tiles that are in the current perimeter
         adjacent_count = 0
@@ -626,11 +636,12 @@ while running:
     '''
 
     # draw trail
-    for y, x in trail_cells:  # skip the first tile
+    for y, x in trail_cells[:-1]:  # skip the last tile
         rect = pygame.Rect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE)
         pygame.draw.rect(screen, COL_TRAIL, rect)
 
     #(x * tilesize - 1 or 2) is used to centre larger player and rock images on 8x8 tile
+    #pygame.draw.rect(screen, (255, 255, 255), (0, SCREEN_H, SCREEN_W, 20))
 
     # draw perimeter outline
     for (y, x) in player_perimeter:
@@ -645,8 +656,8 @@ while running:
 
     # draw player
     #pygame.draw.rect(screen, COL_PLAYER, pygame.Rect(player_x*TILE_SIZE, player_y*TILE_SIZE, TILE_SIZE, TILE_SIZE))
-    player_vis_x += (player_x * TILE_SIZE - player_vis_x) * 0.6
-    player_vis_y += (player_y * TILE_SIZE - player_vis_y) * 0.6
+    player_vis_x += (player_x * TILE_SIZE - player_vis_x) * 0.4
+    player_vis_y += (player_y * TILE_SIZE - player_vis_y) * 0.4
     screen.blit(player_image, ((player_vis_x) - 3, (player_vis_y) - 3))
 
     # draw qix
@@ -670,10 +681,12 @@ while running:
         screen.blit(sparx_image, (int(sparx["vis_pos"][0] - 3), int(sparx["vis_pos"][1] - 4)))
         #pygame.draw.circle(screen, (255, 0, 0), (int(sparx["vis_pos"][0]) +5, int(sparx["vis_pos"][1]) +5), 4)
     
-    # HUD
-    txt = font.render(f"Lifeforce: {lifeforce} Filled: {int(percent_filled()*100)}%", True, (255,255,255))
+    
 
-    screen.blit(txt, (0, 0))
+    # HUD
+    txt = font.render(f"Lifeforce: {lifeforce} Filled: {int(percent_filled()*100)}%", True, (0,0,0))
+
+    screen.blit(txt, (0, SCREEN_H + 2))
 
     pygame.display.flip()
 
