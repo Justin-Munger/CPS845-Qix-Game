@@ -930,16 +930,18 @@ class QixGame:
         self.screen.fill((20, 20, 60))
         
         scale = self.config.WINDOW_SCALE
+        center_x = self.config.screen_width // 2
+        center_y = self.config.screen_height // 2
         
         # Title
         title_text = self.title_font.render("THE QIX GAME", True, (255, 255, 100))
-        title_rect = title_text.get_rect(center=(self.config.screen_width // 2, int(80 * scale)))
+        title_rect = title_text.get_rect(center=(center_x, center_y - int(180 * scale)))
         self.screen.blit(title_text, title_rect)
         
         # Difficulty options
-        y_offset = int(160 * scale)
+        y_offset = center_y - int(100 * scale)
         select_text = self.menu_font.render("SELECT DIFFICULTY:", True, (255, 255, 100))
-        select_rect = select_text.get_rect(center=(self.config.screen_width // 2, y_offset))
+        select_rect = select_text.get_rect(center=(center_x, y_offset))
         self.screen.blit(select_text, select_rect)
         
         difficulties = [
@@ -959,20 +961,18 @@ class QixGame:
                 prefix = "  "
             
             option_text = self.menu_font.render(f"{prefix}{text}", True, color)
-            option_rect = option_text.get_rect(center=(self.config.screen_width // 2, y_offset))
+            option_rect = option_text.get_rect(center=(center_x, y_offset))
             self.screen.blit(option_text, option_rect)
             y_offset += int(40 * scale)
         
         # Instructions
-        y_offset += int(30 * scale)
+        y_offset = center_y + int(50 * scale)
         instructions = [
             "HOW TO PLAY:",
             "Arrow keys to navigate / move",
             "ENTER or SPACE to select / draw",
             "Capture 75% area to win!",
-            "Avoid Qix and Sparx enemies",
-            "",
-            "Resize window to scale"
+            "Avoid Qix and Sparx enemies"
         ]
         
         for line in instructions:
@@ -982,7 +982,7 @@ class QixGame:
                 color = (180, 180, 180)
             
             text = self.font.render(line, True, color)
-            text_rect = text.get_rect(center=(self.config.screen_width // 2, y_offset))
+            text_rect = text.get_rect(center=(center_x, y_offset))
             self.screen.blit(text, text_rect)
             y_offset += int(24 * scale)
         
