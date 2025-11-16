@@ -614,6 +614,9 @@ class QixGame:
         self._remap_sparx_indices()
         self.player.trail.clear()
         self.player.is_drawing = False
+        
+        # Teleport player to nearest perimeter if out of bounds
+        self._teleport_player_to_perimeter_if_needed()
     
     def update_qix(self):
         """Update Qix movement."""
