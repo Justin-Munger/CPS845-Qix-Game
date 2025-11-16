@@ -11,6 +11,59 @@ STATE_MENU = 0
 STATE_PLAYING = 1
 STATE_GAMEOVER = 2
 
+difficulties = ["Easy", "Normal", "Hard"]
+selected_diff = 1  # default = Normal
+player_difficulty = None
+
+def draw_menu():
+    screen.fill((10, 10, 40))
+    
+    title = font.render("THE QIX GAME", True, (255, 255, 255))
+    screen.blit(title, (SCREEN_W//2 - title.get_width()//2, 80))
+    
+    subtitle = font.render("Select Difficulty:", True, (200, 200, 200))
+    screen.blit(subtitle, (SCREEN_W//2 - subtitle.get_width()//2, 150))
+
+    # draw difficulty options
+    spacing = 40
+    y_start = 200
+    for i, diff in enumerate(difficulties):
+        color = (255, 255, 0) if i == selected_diff else (180, 180, 180)
+        text = font.render(diff, True, color)
+        screen.blit(text, (SCREEN_W//2 - text.get_width()//2, y_start + i*spacing))
+
+    start_msg = font.render("Press ENTER to Start", True, (255, 255, 255))
+    screen.blit(start_msg, (SCREEN_W//2 - start_msg.get_width()//2, 450))
+
+    pygame.display.flip()
+
+
+def handle_menu_input():
+    global game_state, running, selected_diff, player_difficulty
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+        
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_UP:
+                selected_diff = (selected_diff - 1) % len(difficulties)
+            
+            elif event.key == pygame.K_DOWN:
+                selected_diff = (selected_diff + 1) % len(difficulties)
+
+            elif event.key == pygame.K_RETURN:
+                # lock in difficulty
+                player_difficulty = difficulties[selected_diff]
+                print("Difficulty selected:", player_difficulty)
+                game_state = STATE_PLAYING
+
+            elif event.key == pygame.K_ESCAPE:
+                running = False
+
+
+
+
 game_state = STATE_MENU
 
 # === Config ===
@@ -471,6 +524,11 @@ running = True
 move_delay = 0
 while running:
     dt = clock.tick(FPS)
+
+    if game_state == STATE_MENU:
+        draw_menu()
+        handle_menu_input()
+        continue
     for ev in pygame.event.get():
         if ev.type == pygame.QUIT:
             running = False
