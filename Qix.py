@@ -28,6 +28,14 @@ class GameState(IntEnum):
     MENU = 0
     PLAYING = 1
     GAMEOVER = 2
+    WIN = 3
+
+
+class Difficulty(IntEnum):
+    """Represents game difficulty levels."""
+    EASY = 9
+    MEDIUM = 6
+    HARD = 3
 
 
 @dataclass
@@ -41,6 +49,7 @@ class GameConfig:
     # Display settings
     FPS: int = 60
     HUD_HEIGHT: int = 20
+    WINDOW_SCALE: float = 1.0  # Adjustable window scale
     
     # Game rules
     FILL_THRESHOLD: float = 0.75
@@ -65,11 +74,19 @@ class GameConfig:
     
     @property
     def screen_width(self) -> int:
-        return self.GRID_WIDTH * self.TILE_SIZE
+        return int(self.GRID_WIDTH * self.TILE_SIZE * self.WINDOW_SCALE)
     
     @property
     def screen_height(self) -> int:
-        return self.GRID_HEIGHT * self.TILE_SIZE
+        return int(self.GRID_HEIGHT * self.TILE_SIZE * self.WINDOW_SCALE)
+    
+    @property
+    def scaled_tile_size(self) -> int:
+        return int(self.TILE_SIZE * self.WINDOW_SCALE)
+    
+    @property
+    def scaled_hud_height(self) -> int:
+        return int(self.HUD_HEIGHT * self.WINDOW_SCALE)
 
 
 # ============================================================================
@@ -158,12 +175,12 @@ class Grid:
 class Player:
     """Represents the player character."""
     
-    def __init__(self, x: int, y: int):
+    def __init__(self, x: int, y: int, lives: int = 9):
         self.x = x
         self.y = y
-        self.vis_x = float(x * config.TILE_SIZE)
-        self.vis_y = float(y * config.TILE_SIZE)
-        self.lives = config.INITIAL_LIVES
+        self.vis_x = float(x * GameConfig.TILE_SIZE)
+        self.vis_y = float(y * GameConfig.TILE_SIZE)
+        self.lives = lives
         self.is_drawing = False
         self.trail: List[Tuple[int, int]] = []
         self.trail_start: Optional[Tuple[int, int]] = None
@@ -190,10 +207,10 @@ class Player:
         self.trail.clear()
         self.is_drawing = False
     
-    def update_visual_position(self):
+    def update_visual_position(self, tile_size: int):
         """Smoothly interpolate visual position toward actual position."""
-        target_x = self.x * config.TILE_SIZE
-        target_y = self.y * config.TILE_SIZE
+        target_x = self.x * tile_size
+        target_y = self.y * tile_size
         self.vis_x += (target_x - self.vis_x) * 0.4
         self.vis_y += (target_y - self.vis_y) * 0.4
 
@@ -201,13 +218,14 @@ class Player:
 class Qix:
     """Represents the main enemy (Qix) that roams the play area."""
     
-    def __init__(self, y: int, x: int):
+    def __init__(self, y: int, x: int, tile_size: int = 8):
         self.y = y
         self.x = x
         self.vel_y = 1
         self.vel_x = 1
-        self.vis_x = float(x * config.TILE_SIZE)
-        self.vis_y = float(y * config.TILE_SIZE)
+        self.tile_size = tile_size
+        self.vis_x = float(x * tile_size)
+        self.vis_y = float(y * tile_size)
         self.move_timer = 0
     
     def move(self, grid: Grid):
@@ -243,8 +261,8 @@ class Qix:
     
     def update_visual_position(self):
         """Smoothly interpolate visual position toward actual position."""
-        target_x = self.x * config.TILE_SIZE
-        target_y = self.y * config.TILE_SIZE
+        target_x = self.x * self.tile_size
+        target_y = self.y * self.tile_size
         self.vis_x += (target_x - self.vis_x) * 0.3
         self.vis_y += (target_y - self.vis_y) * 0.3
 
@@ -252,12 +270,13 @@ class Qix:
 class Sparx:
     """Represents a Sparx enemy that patrols the perimeter."""
     
-    def __init__(self, pos: Tuple[int, int], direction: int, index: int):
+    def __init__(self, pos: Tuple[int, int], direction: int, index: int, tile_size: int = 8):
         self.pos = pos
         self.direction = direction  # 1 = clockwise, -1 = counterclockwise
         self.index = index
-        self.vis_x = float(pos[1] * config.TILE_SIZE)
-        self.vis_y = float(pos[0] * config.TILE_SIZE)
+        self.tile_size = tile_size
+        self.vis_x = float(pos[1] * tile_size)
+        self.vis_y = float(pos[0] * tile_size)
         self.cooldown = 0
     
     def move(self, ordered_perimeter: List[Tuple[int, int]]):
@@ -273,8 +292,8 @@ class Sparx:
     
     def update_visual_position(self):
         """Smoothly interpolate visual position toward actual position."""
-        target_x = self.pos[1] * config.TILE_SIZE
-        target_y = self.pos[0] * config.TILE_SIZE
+        target_x = self.pos[1] * self.tile_size
+        target_y = self.pos[0] * self.tile_size
         self.vis_x += (target_x - self.vis_x) * 0.2
         self.vis_y += (target_y - self.vis_y) * 0.2
 
@@ -424,19 +443,8 @@ class QixGame:
     
     def __init__(self):
         self.config = config
-        self.grid = Grid(config.GRID_WIDTH, config.GRID_HEIGHT)
-        self.perimeter_mgr = PerimeterManager(self.grid)
-        self.trail_mgr = TrailManager(self.grid)
-        self.collision = CollisionDetector()
-        
-        # Initialize entities
-        start_x = config.GRID_WIDTH // 2
-        start_y = config.GRID_HEIGHT - 1
-        self.player = Player(start_x, start_y)
-        self.qix = Qix(config.GRID_HEIGHT // 3, config.GRID_WIDTH // 3)
-        self.sparx_list: List[Sparx] = []
-        
-        self._initialize_sparx()
+        self.game_state = GameState.MENU
+        self.selected_difficulty = Difficulty.MEDIUM
         
         # Initialize Pygame
         pygame.init()
@@ -446,9 +454,20 @@ class QixGame:
         pygame.display.set_caption("The Qix Game")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("consolas", 22, bold=True)
+        self.title_font = pygame.font.SysFont("consolas", 48, bold=True)
+        self.menu_font = pygame.font.SysFont("consolas", 32, bold=True)
         
         # Load assets
         self._load_assets()
+        
+        # Game entities (initialized when starting game)
+        self.grid = None
+        self.perimeter_mgr = None
+        self.trail_mgr = None
+        self.collision = None
+        self.player = None
+        self.qix = None
+        self.sparx_list = []
         
         self.running = True
     
@@ -471,6 +490,23 @@ class QixGame:
             self.qix_img = pygame.Surface((config.TILE_SIZE, config.TILE_SIZE))
             self.sparx_img = pygame.Surface((config.TILE_SIZE, config.TILE_SIZE))
     
+    def _initialize_game(self, difficulty: Difficulty):
+        """Initialize or reset the game with the selected difficulty."""
+        self.grid = Grid(config.GRID_WIDTH, config.GRID_HEIGHT)
+        self.perimeter_mgr = PerimeterManager(self.grid)
+        self.trail_mgr = TrailManager(self.grid)
+        self.collision = CollisionDetector()
+        
+        # Initialize entities
+        start_x = config.GRID_WIDTH // 2
+        start_y = config.GRID_HEIGHT - 1
+        self.player = Player(start_x, start_y, lives=difficulty.value)
+        self.qix = Qix(config.GRID_HEIGHT // 3, config.GRID_WIDTH // 3, config.TILE_SIZE)
+        self.sparx_list = []
+        
+        self._initialize_sparx()
+        self.game_state = GameState.PLAYING
+    
     def _initialize_sparx(self):
         """Create Sparx enemies on opposite side of player."""
         if not self.perimeter_mgr.ordered_perimeter:
@@ -489,8 +525,8 @@ class QixGame:
         start_pos = self.perimeter_mgr.ordered_perimeter[best_idx]
         
         # Create two Sparx (clockwise and counterclockwise)
-        self.sparx_list.append(Sparx(start_pos, 1, best_idx))
-        self.sparx_list.append(Sparx(start_pos, -1, best_idx))
+        self.sparx_list.append(Sparx(start_pos, 1, best_idx, config.TILE_SIZE))
+        self.sparx_list.append(Sparx(start_pos, -1, best_idx, config.TILE_SIZE))
     
     def _remap_sparx_indices(self):
         """Update Sparx positions after perimeter changes."""
@@ -507,6 +543,25 @@ class QixGame:
             sparx.index = best_idx
             sparx.pos = self.perimeter_mgr.ordered_perimeter[best_idx]
     
+    def _teleport_player_to_perimeter_if_needed(self):
+        """Teleport player to nearest perimeter tile if they're out of bounds."""
+        if (self.player.y, self.player.x) in self.perimeter_mgr.perimeter:
+            return  # Player is on valid perimeter
+        
+        # Find nearest perimeter tile using Manhattan distance
+        if not self.perimeter_mgr.perimeter:
+            return
+        
+        nearest = min(
+            self.perimeter_mgr.perimeter,
+            key=lambda pos: abs(pos[0] - self.player.y) + abs(pos[1] - self.player.x)
+        )
+        
+        print(f"Teleporting player from ({self.player.y}, {self.player.x}) to {nearest}")
+        self.player.y, self.player.x = nearest
+        self.player.vis_x = self.player.x * config.TILE_SIZE
+        self.player.vis_y = self.player.y * config.TILE_SIZE
+    
     def handle_input(self):
         """Process player input."""
         for event in pygame.event.get():
@@ -515,6 +570,27 @@ class QixGame:
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
+                
+                # Menu state input
+                if self.game_state == GameState.MENU:
+                    if event.key == pygame.K_1:
+                        self.selected_difficulty = Difficulty.EASY
+                        self._initialize_game(self.selected_difficulty)
+                    elif event.key == pygame.K_2:
+                        self.selected_difficulty = Difficulty.MEDIUM
+                        self._initialize_game(self.selected_difficulty)
+                    elif event.key == pygame.K_3:
+                        self.selected_difficulty = Difficulty.HARD
+                        self._initialize_game(self.selected_difficulty)
+                
+                # Game over/win state input
+                elif self.game_state in (GameState.GAMEOVER, GameState.WIN):
+                    if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                        self.game_state = GameState.MENU
+        
+        # Only return movement input if playing
+        if self.game_state != GameState.PLAYING:
+            return 0, 0, False
         
         keys = pygame.key.get_pressed()
         
@@ -692,7 +768,7 @@ class QixGame:
             self.screen.blit(self.rock_img, pos)
         
         # Draw player
-        self.player.update_visual_position()
+        self.player.update_visual_position(config.TILE_SIZE)
         self.screen.blit(self.player_img, 
                         (self.player.vis_x - 3, self.player.vis_y - 3))
         
@@ -722,13 +798,122 @@ class QixGame:
         """Check for win/loss conditions."""
         if self.player.lives <= 0:
             print("Game Over - You Lost!")
+            self.game_state = GameState.GAMEOVER
             return True
         
         if self.grid.calculate_fill_percentage() >= config.FILL_THRESHOLD:
             print("You Win!")
+            self.game_state = GameState.WIN
             return True
         
         return False
+    
+    def render_menu(self):
+        """Render the main menu screen."""
+        self.screen.fill((20, 20, 60))
+        
+        # Title
+        title_text = self.title_font.render("THE QIX GAME", True, (255, 255, 100))
+        title_rect = title_text.get_rect(center=(config.screen_width // 2, 100))
+        self.screen.blit(title_text, title_rect)
+        
+        # Instructions
+        y_offset = 220
+        instructions = [
+            "SELECT DIFFICULTY:",
+            "",
+            "1 - EASY (9 Lives)",
+            "2 - MEDIUM (6 Lives)",
+            "3 - HARD (3 Lives)",
+            "",
+            "",
+            "HOW TO PLAY:",
+            "Use arrow keys to move",
+            "Hold SPACE to draw trail",
+            "Capture 75% of the area to win!",
+            "",
+            "Avoid the Qix and Sparx enemies"
+        ]
+        
+        for i, line in enumerate(instructions):
+            if line in ["SELECT DIFFICULTY:", "HOW TO PLAY:"]:
+                color = (255, 255, 100)
+                font = self.menu_font
+            elif line.startswith(("1", "2", "3")):
+                color = (100, 255, 100)
+                font = self.menu_font
+            else:
+                color = (200, 200, 200)
+                font = self.font
+            
+            text = font.render(line, True, color)
+            text_rect = text.get_rect(center=(config.screen_width // 2, y_offset + i * 35))
+            self.screen.blit(text, text_rect)
+        
+        pygame.display.flip()
+    
+    def render_game_over(self):
+        """Render the game over screen."""
+        self.screen.fill((60, 20, 20))
+        
+        # Game Over title
+        title_text = self.title_font.render("GAME OVER", True, (255, 100, 100))
+        title_rect = title_text.get_rect(center=(config.screen_width // 2, 150))
+        self.screen.blit(title_text, title_rect)
+        
+        # Stats
+        if self.grid:
+            fill_pct = int(self.grid.calculate_fill_percentage() * 100)
+            stats_text = self.menu_font.render(f"Area Captured: {fill_pct}%", True, (255, 255, 255))
+            stats_rect = stats_text.get_rect(center=(config.screen_width // 2, 250))
+            self.screen.blit(stats_text, stats_rect)
+        
+        # Continue instruction
+        continue_text = self.menu_font.render("Press ENTER to Continue", True, (200, 200, 200))
+        continue_rect = continue_text.get_rect(center=(config.screen_width // 2, 350))
+        self.screen.blit(continue_text, continue_rect)
+        
+        pygame.display.flip()
+    
+    def render_win(self):
+        """Render the win screen."""
+        self.screen.fill((20, 60, 20))
+        
+        # Win title
+        title_text = self.title_font.render("VICTORY!", True, (100, 255, 100))
+        title_rect = title_text.get_rect(center=(config.screen_width // 2, 150))
+        self.screen.blit(title_text, title_rect)
+        
+        # Stats
+        difficulty_names = {Difficulty.EASY: "EASY", Difficulty.MEDIUM: "MEDIUM", Difficulty.HARD: "HARD"}
+        diff_text = self.menu_font.render(
+            f"Difficulty: {difficulty_names[self.selected_difficulty]}", 
+            True, 
+            (255, 255, 255)
+        )
+        diff_rect = diff_text.get_rect(center=(config.screen_width // 2, 230))
+        self.screen.blit(diff_text, diff_rect)
+        
+        lives_text = self.menu_font.render(
+            f"Lives Remaining: {self.player.lives}", 
+            True, 
+            (255, 255, 255)
+        )
+        lives_rect = lives_text.get_rect(center=(config.screen_width // 2, 280))
+        self.screen.blit(lives_text, lives_rect)
+        
+        if self.grid:
+            fill_pct = int(self.grid.calculate_fill_percentage() * 100)
+            stats_text = self.menu_font.render(f"Area Captured: {fill_pct}%", True, (255, 255, 255))
+            stats_rect = stats_text.get_rect(center=(config.screen_width // 2, 330))
+            self.screen.blit(stats_text, stats_rect)
+        
+        # Continue instruction
+        continue_text = self.menu_font.render("Press ENTER to Continue", True, (200, 200, 200))
+        continue_rect = continue_text.get_rect(center=(config.screen_width // 2, 410))
+        self.screen.blit(continue_text, continue_rect)
+        
+        pygame.display.flip()
     
     def run(self):
         """Main game loop."""
@@ -738,17 +923,27 @@ class QixGame:
             # Input
             dx, dy, trail_key = self.handle_input()
             
-            # Update
-            self.update_player(dx, dy, trail_key)
-            self.update_qix()
-            self.update_sparx()
+            # Update and render based on game state
+            if self.game_state == GameState.MENU:
+                self.render_menu()
             
-            # Render
-            self.render()
+            elif self.game_state == GameState.PLAYING:
+                # Update
+                self.update_player(dx, dy, trail_key)
+                self.update_qix()
+                self.update_sparx()
+                
+                # Render
+                self.render()
+                
+                # Check game over
+                self.check_game_over()
             
-            # Check game over
-            if self.check_game_over():
-                self.running = False
+            elif self.game_state == GameState.GAMEOVER:
+                self.render_game_over()
+            
+            elif self.game_state == GameState.WIN:
+                self.render_win()
         
         pygame.quit()
 
