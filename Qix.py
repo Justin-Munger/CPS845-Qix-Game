@@ -445,17 +445,17 @@ class QixGame:
         self.config = config
         self.game_state = GameState.MENU
         self.selected_difficulty = Difficulty.MEDIUM
+        self.menu_selection = 0  # 0=Easy, 1=Medium, 2=Hard
         
         # Initialize Pygame
         pygame.init()
         self.screen = pygame.display.set_mode(
-            (config.screen_width, config.screen_height + config.HUD_HEIGHT)
+            (config.screen_width, config.screen_height + config.scaled_hud_height),
+            pygame.RESIZABLE
         )
         pygame.display.set_caption("The Qix Game")
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont("consolas", 22, bold=True)
-        self.title_font = pygame.font.SysFont("consolas", 48, bold=True)
-        self.menu_font = pygame.font.SysFont("consolas", 32, bold=True)
+        self._update_fonts()
         
         # Load assets
         self._load_assets()
@@ -471,6 +471,12 @@ class QixGame:
         
         self.running = True
     
+    def _update_fonts(self):
+        """Update font sizes based on window scale."""
+        self.font = pygame.font.SysFont("consolas", int(18 * self.config.WINDOW_SCALE), bold=True)
+        self.title_font = pygame.font.SysFont("consolas", int(42 * self.config.WINDOW_SCALE), bold=True)
+        self.menu_font = pygame.font.SysFont("consolas", int(24 * self.config.WINDOW_SCALE), bold=True)
+    
     def _load_assets(self):
         """Load game images."""
         try:
@@ -483,12 +489,24 @@ class QixGame:
         except pygame.error as e:
             print(f"Warning: Could not load image: {e}")
             # Create placeholder surfaces if images don't exist
-            self.background_img = pygame.Surface((config.TILE_SIZE, config.TILE_SIZE))
-            self.land_img = pygame.Surface((config.TILE_SIZE, config.TILE_SIZE))
-            self.rock_img = pygame.Surface((config.TILE_SIZE, config.TILE_SIZE))
-            self.player_img = pygame.Surface((config.TILE_SIZE, config.TILE_SIZE))
-            self.qix_img = pygame.Surface((config.TILE_SIZE, config.TILE_SIZE))
-            self.sparx_img = pygame.Surface((config.TILE_SIZE, config.TILE_SIZE))
+            tile_size = config.TILE_SIZE
+            self.background_img = pygame.Surface((tile_size, tile_size))
+            self.background_img.fill((10, 10, 40))
+            self.land_img = pygame.Surface((tile_size, tile_size))
+            self.land_img.fill((40, 150, 40))
+            self.rock_img = pygame.Surface((tile_size, tile_size))
+            self.rock_img.fill((200, 200, 200))
+            self.player_img = pygame.Surface((tile_size, tile_size))
+            self.player_img.fill((255, 255, 255))
+            self.qix_img = pygame.Surface((tile_size, tile_size))
+            self.qix_img.fill((200, 50, 50))
+            self.sparx_img = pygame.Surface((tile_size, tile_size))
+            self.sparx_img.fill((255, 100, 0))
+    
+    def _scale_image(self, image: pygame.Surface, size: int) -> pygame.Surface:
+        """Scale an image to the current window scale."""
+        scaled_size = int(size * self.config.WINDOW_SCALE)
+        return pygame.transform.scale(image, (scaled_size, scaled_size))
     
     def _initialize_game(self, difficulty: Difficulty):
         """Initialize or reset the game with the selected difficulty."""
@@ -573,13 +591,25 @@ class QixGame:
                 
                 # Menu state input
                 if self.game_state == GameState.MENU:
-                    if event.key == pygame.K_1:
+                    if event.key == pygame.K_UP:
+                        self.menu_selection = (self.menu_selection - 1) % 3
+                    elif event.key == pygame.K_DOWN:
+                        self.menu_selection = (self.menu_selection + 1) % 3
+                    elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                        difficulty_map = {0: Difficulty.EASY, 1: Difficulty.MEDIUM, 2: Difficulty.HARD}
+                        self.selected_difficulty = difficulty_map[self.menu_selection]
+                        self._initialize_game(self.selected_difficulty)
+                    # Keep number key shortcuts
+                    elif event.key == pygame.K_1:
+                        self.menu_selection = 0
                         self.selected_difficulty = Difficulty.EASY
                         self._initialize_game(self.selected_difficulty)
                     elif event.key == pygame.K_2:
+                        self.menu_selection = 1
                         self.selected_difficulty = Difficulty.MEDIUM
                         self._initialize_game(self.selected_difficulty)
                     elif event.key == pygame.K_3:
+                        self.menu_selection = 2
                         self.selected_difficulty = Difficulty.HARD
                         self._initialize_game(self.selected_difficulty)
                 
@@ -587,6 +617,11 @@ class QixGame:
                 elif self.game_state in (GameState.GAMEOVER, GameState.WIN):
                     if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
                         self.game_state = GameState.MENU
+                        self.menu_selection = 1  # Reset to medium
+            
+            elif event.type == pygame.VIDEORESIZE:
+                # Handle window resize
+                self._handle_resize(event.w, event.h)
         
         # Only return movement input if playing
         if self.game_state != GameState.PLAYING:
@@ -617,6 +652,30 @@ class QixGame:
                 self.player.last_key = None
         
         return dx, dy, keys[pygame.K_SPACE]
+    
+    def _handle_resize(self, width: int, height: int):
+        """Handle window resize event."""
+        # Calculate new scale based on width (maintaining aspect ratio)
+        base_width = config.GRID_WIDTH * config.TILE_SIZE
+        base_height = config.GRID_HEIGHT * config.TILE_SIZE + config.HUD_HEIGHT
+        
+        scale_x = width / base_width
+        scale_y = (height - config.HUD_HEIGHT) / base_height
+        
+        # Use the smaller scale to maintain aspect ratio
+        new_scale = min(scale_x, scale_y, 3.0)  # Max scale of 3.0
+        new_scale = max(new_scale, 0.5)  # Min scale of 0.5
+        
+        self.config.WINDOW_SCALE = new_scale
+        
+        # Update screen
+        self.screen = pygame.display.set_mode(
+            (self.config.screen_width, self.config.screen_height + self.config.scaled_hud_height),
+            pygame.RESIZABLE
+        )
+        
+        # Update fonts
+        self._update_fonts()
     
     def update_player(self, dx: int, dy: int, trail_key_pressed: bool):
         """Update player position and trail."""
@@ -737,51 +796,69 @@ class QixGame:
     
     def render(self):
         """Render the game state."""
+        scale = self.config.WINDOW_SCALE
+        tile_size = self.config.scaled_tile_size
+        
         # Draw background
-        self.screen.blit(self.background_img, (0, 0))
+        scaled_bg = pygame.transform.scale(self.background_img, 
+                                          (self.config.screen_width, self.config.screen_height))
+        self.screen.blit(scaled_bg, (0, 0))
         
         # Draw grid tiles
         for y in range(self.grid.height):
             for x in range(self.grid.width):
                 tile = self.grid.get(y, x)
                 if tile in (TileState.BORDER, TileState.FILLED):
-                    rect = pygame.Rect(x * config.TILE_SIZE, y * config.TILE_SIZE, 
-                                     config.TILE_SIZE, config.TILE_SIZE)
+                    rect = pygame.Rect(int(x * tile_size), int(y * tile_size), 
+                                     tile_size, tile_size)
                     tx = (x * config.TILE_SIZE) % self.land_img.get_width()
                     ty = (y * config.TILE_SIZE) % self.land_img.get_height()
-                    self.screen.blit(self.land_img, rect, 
-                                   pygame.Rect(tx, ty, config.TILE_SIZE, config.TILE_SIZE))
+                    
+                    # Scale the texture portion
+                    texture_portion = self.land_img.subsurface(pygame.Rect(tx, ty, config.TILE_SIZE, config.TILE_SIZE))
+                    scaled_texture = pygame.transform.scale(texture_portion, (tile_size, tile_size))
+                    self.screen.blit(scaled_texture, rect)
         
         # Draw HUD background
-        self.screen.blit(self.land_img, (0, config.screen_height), 
-                        pygame.Rect(0, config.screen_height, config.screen_width, config.HUD_HEIGHT))
+        hud_rect = pygame.Rect(0, self.config.screen_height, 
+                              self.config.screen_width, self.config.scaled_hud_height)
+        texture_portion = self.land_img.subsurface(pygame.Rect(0, 0, 
+                                                               min(self.land_img.get_width(), config.TILE_SIZE),
+                                                               min(self.land_img.get_height(), config.TILE_SIZE)))
+        scaled_hud_texture = pygame.transform.scale(texture_portion, 
+                                                    (self.config.screen_width, self.config.scaled_hud_height))
+        self.screen.blit(scaled_hud_texture, hud_rect)
         
         # Draw trail (excluding last tile)
         for y, x in self.player.trail[:-1]:
-            rect = pygame.Rect(x * config.TILE_SIZE, y * config.TILE_SIZE, 
-                             config.TILE_SIZE, config.TILE_SIZE)
+            rect = pygame.Rect(int(x * tile_size), int(y * tile_size), 
+                             tile_size, tile_size)
             pygame.draw.rect(self.screen, config.COL_TRAIL, rect)
         
         # Draw perimeter
+        scaled_rock = self._scale_image(self.rock_img, config.TILE_SIZE)
         for y, x in self.perimeter_mgr.perimeter:
-            pos = (x * config.TILE_SIZE - 1, y * config.TILE_SIZE - 1)
-            self.screen.blit(self.rock_img, pos)
+            pos = (int(x * tile_size - scale), int(y * tile_size - scale))
+            self.screen.blit(scaled_rock, pos)
         
         # Draw player
-        self.player.update_visual_position(config.TILE_SIZE)
-        self.screen.blit(self.player_img, 
-                        (self.player.vis_x - 3, self.player.vis_y - 3))
+        self.player.update_visual_position(tile_size)
+        scaled_player = self._scale_image(self.player_img, config.TILE_SIZE + 6)
+        self.screen.blit(scaled_player, 
+                        (int(self.player.vis_x - 3 * scale), int(self.player.vis_y - 3 * scale)))
         
         # Draw Qix
         self.qix.update_visual_position()
-        self.screen.blit(self.qix_img, 
-                        (self.qix.vis_x - 4, self.qix.vis_y - 4))
+        scaled_qix = self._scale_image(self.qix_img, config.TILE_SIZE + 8)
+        self.screen.blit(scaled_qix, 
+                        (int(self.qix.vis_x * scale - 4 * scale), int(self.qix.vis_y * scale - 4 * scale)))
         
         # Draw Sparx
+        scaled_sparx = self._scale_image(self.sparx_img, config.TILE_SIZE + 6)
         for sparx in self.sparx_list:
             sparx.update_visual_position()
-            self.screen.blit(self.sparx_img, 
-                           (int(sparx.vis_x - 3), int(sparx.vis_y - 4)))
+            self.screen.blit(scaled_sparx, 
+                           (int(sparx.vis_x * scale - 3 * scale), int(sparx.vis_y * scale - 4 * scale)))
         
         # Draw HUD
         fill_pct = int(self.grid.calculate_fill_percentage() * 100)
@@ -790,7 +867,7 @@ class QixGame:
             True, 
             config.COL_HUD_TEXT
         )
-        self.screen.blit(hud_text, (0, config.screen_height + 2))
+        self.screen.blit(hud_text, (int(5 * scale), int(self.config.screen_height + 2 * scale)))
         
         pygame.display.flip()
     
@@ -812,43 +889,62 @@ class QixGame:
         """Render the main menu screen."""
         self.screen.fill((20, 20, 60))
         
+        scale = self.config.WINDOW_SCALE
+        
         # Title
         title_text = self.title_font.render("THE QIX GAME", True, (255, 255, 100))
-        title_rect = title_text.get_rect(center=(config.screen_width // 2, 100))
+        title_rect = title_text.get_rect(center=(self.config.screen_width // 2, int(100 * scale)))
         self.screen.blit(title_text, title_rect)
         
-        # Instructions
-        y_offset = 220
-        instructions = [
-            "SELECT DIFFICULTY:",
-            "",
-            "1 - EASY (9 Lives)",
-            "2 - MEDIUM (6 Lives)",
-            "3 - HARD (3 Lives)",
-            "",
-            "",
-            "HOW TO PLAY:",
-            "Use arrow keys to move",
-            "Hold SPACE to draw trail",
-            "Capture 75% of the area to win!",
-            "",
-            "Avoid the Qix and Sparx enemies"
+        # Difficulty options
+        y_offset = int(220 * scale)
+        select_text = self.menu_font.render("SELECT DIFFICULTY:", True, (255, 255, 100))
+        select_rect = select_text.get_rect(center=(self.config.screen_width // 2, y_offset))
+        self.screen.blit(select_text, select_rect)
+        
+        difficulties = [
+            ("EASY (9 Lives)", 0),
+            ("MEDIUM (6 Lives)", 1),
+            ("HARD (3 Lives)", 2)
         ]
         
-        for i, line in enumerate(instructions):
-            if line in ["SELECT DIFFICULTY:", "HOW TO PLAY:"]:
-                color = (255, 255, 100)
-                font = self.menu_font
-            elif line.startswith(("1", "2", "3")):
+        y_offset += int(60 * scale)
+        for text, index in difficulties:
+            # Highlight selected option
+            if index == self.menu_selection:
                 color = (100, 255, 100)
-                font = self.menu_font
+                prefix = "> "
             else:
                 color = (200, 200, 200)
-                font = self.font
+                prefix = "  "
             
-            text = font.render(line, True, color)
-            text_rect = text.get_rect(center=(config.screen_width // 2, y_offset + i * 35))
+            option_text = self.menu_font.render(f"{prefix}{text}", True, color)
+            option_rect = option_text.get_rect(center=(self.config.screen_width // 2, y_offset))
+            self.screen.blit(option_text, option_rect)
+            y_offset += int(50 * scale)
+        
+        # Instructions
+        y_offset += int(40 * scale)
+        instructions = [
+            "HOW TO PLAY:",
+            "Arrow keys to navigate menu / move",
+            "ENTER or SPACE to select / draw trail",
+            "Capture 75% of the area to win!",
+            "Avoid the Qix and Sparx enemies",
+            "",
+            "Press +/- or resize window to scale"
+        ]
+        
+        for line in instructions:
+            if line == "HOW TO PLAY:":
+                color = (255, 255, 100)
+            else:
+                color = (180, 180, 180)
+            
+            text = self.font.render(line, True, color)
+            text_rect = text.get_rect(center=(self.config.screen_width // 2, y_offset))
             self.screen.blit(text, text_rect)
+            y_offset += int(30 * scale)
         
         pygame.display.flip()
     
@@ -856,21 +952,23 @@ class QixGame:
         """Render the game over screen."""
         self.screen.fill((60, 20, 20))
         
+        scale = self.config.WINDOW_SCALE
+        
         # Game Over title
         title_text = self.title_font.render("GAME OVER", True, (255, 100, 100))
-        title_rect = title_text.get_rect(center=(config.screen_width // 2, 150))
+        title_rect = title_text.get_rect(center=(self.config.screen_width // 2, int(150 * scale)))
         self.screen.blit(title_text, title_rect)
         
         # Stats
         if self.grid:
             fill_pct = int(self.grid.calculate_fill_percentage() * 100)
             stats_text = self.menu_font.render(f"Area Captured: {fill_pct}%", True, (255, 255, 255))
-            stats_rect = stats_text.get_rect(center=(config.screen_width // 2, 250))
+            stats_rect = stats_text.get_rect(center=(self.config.screen_width // 2, int(250 * scale)))
             self.screen.blit(stats_text, stats_rect)
         
         # Continue instruction
         continue_text = self.menu_font.render("Press ENTER to Continue", True, (200, 200, 200))
-        continue_rect = continue_text.get_rect(center=(config.screen_width // 2, 350))
+        continue_rect = continue_text.get_rect(center=(self.config.screen_width // 2, int(350 * scale)))
         self.screen.blit(continue_text, continue_rect)
         
         pygame.display.flip()
@@ -879,9 +977,11 @@ class QixGame:
         """Render the win screen."""
         self.screen.fill((20, 60, 20))
         
+        scale = self.config.WINDOW_SCALE
+        
         # Win title
         title_text = self.title_font.render("VICTORY!", True, (100, 255, 100))
-        title_rect = title_text.get_rect(center=(config.screen_width // 2, 150))
+        title_rect = title_text.get_rect(center=(self.config.screen_width // 2, int(150 * scale)))
         self.screen.blit(title_text, title_rect)
         
         # Stats
@@ -891,7 +991,7 @@ class QixGame:
             True, 
             (255, 255, 255)
         )
-        diff_rect = diff_text.get_rect(center=(config.screen_width // 2, 230))
+        diff_rect = diff_text.get_rect(center=(self.config.screen_width // 2, int(230 * scale)))
         self.screen.blit(diff_text, diff_rect)
         
         lives_text = self.menu_font.render(
@@ -899,18 +999,18 @@ class QixGame:
             True, 
             (255, 255, 255)
         )
-        lives_rect = lives_text.get_rect(center=(config.screen_width // 2, 280))
+        lives_rect = lives_text.get_rect(center=(self.config.screen_width // 2, int(280 * scale)))
         self.screen.blit(lives_text, lives_rect)
         
         if self.grid:
             fill_pct = int(self.grid.calculate_fill_percentage() * 100)
             stats_text = self.menu_font.render(f"Area Captured: {fill_pct}%", True, (255, 255, 255))
-            stats_rect = stats_text.get_rect(center=(config.screen_width // 2, 330))
+            stats_rect = stats_text.get_rect(center=(self.config.screen_width // 2, int(330 * scale)))
             self.screen.blit(stats_text, stats_rect)
         
         # Continue instruction
         continue_text = self.menu_font.render("Press ENTER to Continue", True, (200, 200, 200))
-        continue_rect = continue_text.get_rect(center=(config.screen_width // 2, 410))
+        continue_rect = continue_text.get_rect(center=(self.config.screen_width // 2, int(410 * scale)))
         self.screen.blit(continue_text, continue_rect)
         
         pygame.display.flip()
