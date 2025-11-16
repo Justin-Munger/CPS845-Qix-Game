@@ -411,15 +411,30 @@ class TrailManager:
             self.grid.set(y, x, TileState.FILLED)
         
         # Flood fill from Qix to find reachable empty tiles
-        reachable = self.grid.flood_fill([qix_pos])
+        qix_reachable = self.grid.flood_fill([qix_pos])
         
-        # Fill unreachable empty tiles
-        newly_filled = 0
+        # Count empty areas on each side
+        all_empty = set()
         for y in range(self.grid.height):
             for x in range(self.grid.width):
-                if self.grid.get(y, x) == TileState.EMPTY and (y, x) not in reachable:
-                    self.grid.set(y, x, TileState.FILLED)
-                    newly_filled += 1
+                if self.grid.get(y, x) == TileState.EMPTY:
+                    all_empty.add((y, x))
+        
+        non_qix_empty = all_empty - qix_reachable
+        
+        # Determine which side to fill (the smaller area)
+        if len(non_qix_empty) < len(qix_reachable):
+            # Fill the side WITHOUT the Qix (smaller area)
+            area_to_fill = non_qix_empty
+        else:
+            # Fill the side WITH the Qix (smaller area)
+            area_to_fill = qix_reachable
+        
+        # Fill the smaller area
+        newly_filled = 0
+        for y, x in area_to_fill:
+            self.grid.set(y, x, TileState.FILLED)
+            newly_filled += 1
         
         return newly_filled
     
@@ -799,75 +814,100 @@ class QixGame:
         scale = self.config.WINDOW_SCALE
         tile_size = self.config.scaled_tile_size
         
-        # Draw background
+        # Draw background (scaled to fill entire play area)
         scaled_bg = pygame.transform.scale(self.background_img, 
                                           (self.config.screen_width, self.config.screen_height))
         self.screen.blit(scaled_bg, (0, 0))
         
-        # Draw grid tiles
+        # Draw grid tiles - only BORDER and FILLED
         for y in range(self.grid.height):
             for x in range(self.grid.width):
                 tile = self.grid.get(y, x)
                 if tile in (TileState.BORDER, TileState.FILLED):
-                    rect = pygame.Rect(int(x * tile_size), int(y * tile_size), 
-                                     tile_size, tile_size)
+                    # Calculate exact pixel position
+                    px = x * tile_size
+                    py = y * tile_size
+                    
+                    # Get source texture coordinates (tile within the original texture)
                     tx = (x * config.TILE_SIZE) % self.land_img.get_width()
                     ty = (y * config.TILE_SIZE) % self.land_img.get_height()
                     
-                    # Scale the texture portion
-                    texture_portion = self.land_img.subsurface(pygame.Rect(tx, ty, config.TILE_SIZE, config.TILE_SIZE))
-                    scaled_texture = pygame.transform.scale(texture_portion, (tile_size, tile_size))
-                    self.screen.blit(scaled_texture, rect)
+                    # Extract the tile from the original texture
+                    source_w = min(config.TILE_SIZE, self.land_img.get_width() - tx)
+                    source_h = min(config.TILE_SIZE, self.land_img.get_height() - ty)
+                    
+                    try:
+                        texture_portion = self.land_img.subsurface(pygame.Rect(tx, ty, source_w, source_h))
+                        # Scale to exact tile size (no +1, exact dimensions)
+                        scaled_texture = pygame.transform.scale(texture_portion, (tile_size, tile_size))
+                        self.screen.blit(scaled_texture, (px, py))
+                    except ValueError:
+                        # Fallback if subsurface fails
+                        pygame.draw.rect(self.screen, config.COL_FILLED, 
+                                       pygame.Rect(px, py, tile_size, tile_size))
         
-        # Draw HUD background
-        hud_rect = pygame.Rect(0, self.config.screen_height, 
-                              self.config.screen_width, self.config.scaled_hud_height)
-        texture_portion = self.land_img.subsurface(pygame.Rect(0, 0, 
-                                                               min(self.land_img.get_width(), config.TILE_SIZE),
-                                                               min(self.land_img.get_height(), config.TILE_SIZE)))
-        scaled_hud_texture = pygame.transform.scale(texture_portion, 
-                                                    (self.config.screen_width, self.config.scaled_hud_height))
-        self.screen.blit(scaled_hud_texture, hud_rect)
+        # Draw HUD background (full width, scaled height)
+        hud_y = self.config.screen_height
+        
+        # Create HUD texture by scaling a portion of land texture
+        try:
+            hud_source = self.land_img.subsurface(pygame.Rect(0, 0, 
+                                                             min(config.TILE_SIZE * 10, self.land_img.get_width()),
+                                                             min(config.TILE_SIZE, self.land_img.get_height())))
+            scaled_hud_texture = pygame.transform.scale(hud_source, 
+                                                        (self.config.screen_width, self.config.scaled_hud_height))
+            self.screen.blit(scaled_hud_texture, (0, hud_y))
+        except ValueError:
+            # Fallback: solid color HUD
+            pygame.draw.rect(self.screen, config.COL_FILLED,
+                           pygame.Rect(0, hud_y, self.config.screen_width, self.config.scaled_hud_height))
         
         # Draw trail (excluding last tile)
         for y, x in self.player.trail[:-1]:
-            rect = pygame.Rect(int(x * tile_size), int(y * tile_size), 
-                             tile_size, tile_size)
-            pygame.draw.rect(self.screen, config.COL_TRAIL, rect)
+            px = x * tile_size
+            py = y * tile_size
+            pygame.draw.rect(self.screen, config.COL_TRAIL, 
+                           pygame.Rect(px, py, tile_size, tile_size))
         
-        # Draw perimeter
+        # Draw perimeter markers
         scaled_rock = self._scale_image(self.rock_img, config.TILE_SIZE)
         for y, x in self.perimeter_mgr.perimeter:
-            pos = (int(x * tile_size - scale), int(y * tile_size - scale))
-            self.screen.blit(scaled_rock, pos)
+            px = x * tile_size
+            py = y * tile_size
+            # Center the rock image on the tile
+            rock_offset = (tile_size - scaled_rock.get_width()) // 2
+            self.screen.blit(scaled_rock, (px + rock_offset, py + rock_offset))
         
         # Draw player
         self.player.update_visual_position(tile_size)
         scaled_player = self._scale_image(self.player_img, config.TILE_SIZE + 6)
+        player_offset = (config.TILE_SIZE + 6) * scale / 2
         self.screen.blit(scaled_player, 
-                        (int(self.player.vis_x - 3 * scale), int(self.player.vis_y - 3 * scale)))
+                        (self.player.vis_x - player_offset, self.player.vis_y - player_offset))
         
         # Draw Qix
         self.qix.update_visual_position()
         scaled_qix = self._scale_image(self.qix_img, config.TILE_SIZE + 8)
+        qix_offset = (config.TILE_SIZE + 8) * scale / 2
         self.screen.blit(scaled_qix, 
-                        (int(self.qix.vis_x * scale - 4 * scale), int(self.qix.vis_y * scale - 4 * scale)))
+                        (self.qix.vis_x * scale - qix_offset, self.qix.vis_y * scale - qix_offset))
         
         # Draw Sparx
         scaled_sparx = self._scale_image(self.sparx_img, config.TILE_SIZE + 6)
+        sparx_offset = (config.TILE_SIZE + 6) * scale / 2
         for sparx in self.sparx_list:
             sparx.update_visual_position()
             self.screen.blit(scaled_sparx, 
-                           (int(sparx.vis_x * scale - 3 * scale), int(sparx.vis_y * scale - 4 * scale)))
+                           (sparx.vis_x * scale - sparx_offset, sparx.vis_y * scale - sparx_offset))
         
-        # Draw HUD
+        # Draw HUD text
         fill_pct = int(self.grid.calculate_fill_percentage() * 100)
         hud_text = self.font.render(
             f"Lifeforce: {self.player.lives} Filled: {fill_pct}%", 
             True, 
             config.COL_HUD_TEXT
         )
-        self.screen.blit(hud_text, (int(5 * scale), int(self.config.screen_height + 2 * scale)))
+        self.screen.blit(hud_text, (int(5 * scale), int(hud_y + 2 * scale)))
         
         pygame.display.flip()
     
@@ -893,11 +933,11 @@ class QixGame:
         
         # Title
         title_text = self.title_font.render("THE QIX GAME", True, (255, 255, 100))
-        title_rect = title_text.get_rect(center=(self.config.screen_width // 2, int(100 * scale)))
+        title_rect = title_text.get_rect(center=(self.config.screen_width // 2, int(80 * scale)))
         self.screen.blit(title_text, title_rect)
         
         # Difficulty options
-        y_offset = int(220 * scale)
+        y_offset = int(160 * scale)
         select_text = self.menu_font.render("SELECT DIFFICULTY:", True, (255, 255, 100))
         select_rect = select_text.get_rect(center=(self.config.screen_width // 2, y_offset))
         self.screen.blit(select_text, select_rect)
@@ -908,7 +948,7 @@ class QixGame:
             ("HARD (3 Lives)", 2)
         ]
         
-        y_offset += int(60 * scale)
+        y_offset += int(45 * scale)
         for text, index in difficulties:
             # Highlight selected option
             if index == self.menu_selection:
@@ -921,18 +961,18 @@ class QixGame:
             option_text = self.menu_font.render(f"{prefix}{text}", True, color)
             option_rect = option_text.get_rect(center=(self.config.screen_width // 2, y_offset))
             self.screen.blit(option_text, option_rect)
-            y_offset += int(50 * scale)
+            y_offset += int(40 * scale)
         
         # Instructions
-        y_offset += int(40 * scale)
+        y_offset += int(30 * scale)
         instructions = [
             "HOW TO PLAY:",
-            "Arrow keys to navigate menu / move",
-            "ENTER or SPACE to select / draw trail",
-            "Capture 75% of the area to win!",
-            "Avoid the Qix and Sparx enemies",
+            "Arrow keys to navigate / move",
+            "ENTER or SPACE to select / draw",
+            "Capture 75% area to win!",
+            "Avoid Qix and Sparx enemies",
             "",
-            "Press +/- or resize window to scale"
+            "Resize window to scale"
         ]
         
         for line in instructions:
@@ -944,7 +984,7 @@ class QixGame:
             text = self.font.render(line, True, color)
             text_rect = text.get_rect(center=(self.config.screen_width // 2, y_offset))
             self.screen.blit(text, text_rect)
-            y_offset += int(30 * scale)
+            y_offset += int(24 * scale)
         
         pygame.display.flip()
     
