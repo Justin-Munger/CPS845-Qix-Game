@@ -33,9 +33,8 @@ class GameState(IntEnum):
 
 class Difficulty(IntEnum):
     """Represents game difficulty levels."""
-    EASY = 9
-    MEDIUM = 6
-    HARD = 3
+    NORMAL = 0
+    HARD = 1
 
 
 @dataclass
@@ -393,7 +392,7 @@ class TrailManager:
     def __init__(self, grid: Grid):
         self.grid = grid
     
-    def commit_trail(self, trail: List[Tuple[int, int]], qix_pos: Tuple[int, int]) -> int:
+    def commit_trail(self, trail: List[Tuple[int, int]], qix_positions: List[Tuple[int, int]]) -> int:
         """
         Commit the trail and fill captured areas.
         Returns the number of newly filled tiles.
@@ -410,8 +409,8 @@ class TrailManager:
         for y, x in trail:
             self.grid.set(y, x, TileState.FILLED)
         
-        # Flood fill from Qix to find reachable empty tiles
-        qix_reachable = self.grid.flood_fill([qix_pos])
+        # Flood fill from ALL Qix positions to find reachable empty tiles
+        qix_reachable = self.grid.flood_fill(qix_positions)
         
         # Count empty areas on each side
         all_empty = set()
@@ -424,7 +423,7 @@ class TrailManager:
         
         # Determine which side to fill (the smaller area)
         if len(non_qix_empty) < len(qix_reachable):
-            # Fill the side WITHOUT the Qix (smaller area)
+            # Fill the side WITHOUT any Qix (smaller area)
             area_to_fill = non_qix_empty
         else:
             # Fill the side WITH the Qix (smaller area)
@@ -459,8 +458,8 @@ class QixGame:
     def __init__(self):
         self.config = config
         self.game_state = GameState.MENU
-        self.selected_difficulty = Difficulty.MEDIUM
-        self.menu_selection = 0  # 0=Easy, 1=Medium, 2=Hard
+        self.selected_difficulty = Difficulty.NORMAL
+        self.menu_selection = 0  # 0=Normal, 1=Hard
         
         # Initialize Pygame
         pygame.init()
@@ -481,7 +480,7 @@ class QixGame:
         self.trail_mgr = None
         self.collision = None
         self.player = None
-        self.qix = None
+        self.qix_list = []
         self.sparx_list = []
         
         self.running = True
@@ -530,18 +529,29 @@ class QixGame:
         self.trail_mgr = TrailManager(self.grid)
         self.collision = CollisionDetector()
         
-        # Initialize entities
+        # Initialize player with 9 lives for all difficulties
         start_x = config.GRID_WIDTH // 2
         start_y = config.GRID_HEIGHT - 1
-        self.player = Player(start_x, start_y, lives=difficulty.value)
-        self.qix = Qix(config.GRID_HEIGHT // 3, config.GRID_WIDTH // 3, config.TILE_SIZE)
-        self.sparx_list = []
+        self.player = Player(start_x, start_y, lives=9)
         
-        self._initialize_sparx()
+        # Initialize Qix enemies based on difficulty
+        self.qix_list = []
+        if difficulty == Difficulty.NORMAL:
+            # Normal: 1 Qix
+            self.qix_list.append(Qix(config.GRID_HEIGHT // 3, config.GRID_WIDTH // 3, config.TILE_SIZE))
+        else:  # HARD
+            # Hard: 2 Qix
+            self.qix_list.append(Qix(config.GRID_HEIGHT // 3, config.GRID_WIDTH // 3, config.TILE_SIZE))
+            self.qix_list.append(Qix(config.GRID_HEIGHT * 2 // 3, config.GRID_WIDTH * 2 // 3, config.TILE_SIZE))
+        
+        # Initialize Sparx
+        self.sparx_list = []
+        self._initialize_sparx(difficulty)
+        
         self.game_state = GameState.PLAYING
     
-    def _initialize_sparx(self):
-        """Create Sparx enemies on opposite side of player."""
+    def _initialize_sparx(self, difficulty: Difficulty):
+        """Create Sparx enemies based on difficulty."""
         if not self.perimeter_mgr.ordered_perimeter:
             return
         
@@ -557,9 +567,18 @@ class QixGame:
         )
         start_pos = self.perimeter_mgr.ordered_perimeter[best_idx]
         
-        # Create two Sparx (clockwise and counterclockwise)
-        self.sparx_list.append(Sparx(start_pos, 1, best_idx, config.TILE_SIZE))
-        self.sparx_list.append(Sparx(start_pos, -1, best_idx, config.TILE_SIZE))
+        if difficulty == Difficulty.NORMAL:
+            # Normal: 2 Sparx (clockwise and counterclockwise)
+            self.sparx_list.append(Sparx(start_pos, 1, best_idx, config.TILE_SIZE))
+            self.sparx_list.append(Sparx(start_pos, -1, best_idx, config.TILE_SIZE))
+        else:  # HARD
+            # Hard: 3 Sparx
+            self.sparx_list.append(Sparx(start_pos, 1, best_idx, config.TILE_SIZE))
+            self.sparx_list.append(Sparx(start_pos, -1, best_idx, config.TILE_SIZE))
+            # Third sparx starts at a different position
+            third_idx = (best_idx + len(self.perimeter_mgr.ordered_perimeter) // 2) % len(self.perimeter_mgr.ordered_perimeter)
+            third_pos = self.perimeter_mgr.ordered_perimeter[third_idx]
+            self.sparx_list.append(Sparx(third_pos, 1, third_idx, config.TILE_SIZE))
     
     def _remap_sparx_indices(self):
         """Update Sparx positions after perimeter changes."""
@@ -592,8 +611,34 @@ class QixGame:
         
         print(f"Teleporting player from ({self.player.y}, {self.player.x}) to {nearest}")
         self.player.y, self.player.x = nearest
-        self.player.vis_x = self.player.x * config.TILE_SIZE
-        self.player.vis_y = self.player.y * config.TILE_SIZE
+        self.player.vis_x = self.player.x * config.scaled_tile_size
+        self.player.vis_y = self.player.y * config.scaled_tile_size
+    
+    def _relocate_trapped_qix(self):
+        """Move any Qix that are trapped in FILLED areas to EMPTY areas."""
+        for qix in self.qix_list:
+            # Check if Qix is in a FILLED or BORDER tile
+            if self.grid.get(qix.y, qix.x) in (TileState.FILLED, TileState.BORDER):
+                # Find nearest EMPTY tile
+                empty_tiles = []
+                for y in range(self.grid.height):
+                    for x in range(self.grid.width):
+                        if self.grid.get(y, x) == TileState.EMPTY:
+                            empty_tiles.append((y, x))
+                
+                if empty_tiles:
+                    # Find closest empty tile
+                    nearest_empty = min(
+                        empty_tiles,
+                        key=lambda pos: abs(pos[0] - qix.y) + abs(pos[1] - qix.x)
+                    )
+                    print(f"Relocating Qix from ({qix.y}, {qix.x}) to {nearest_empty}")
+                    qix.y, qix.x = nearest_empty
+                    qix.vis_x = qix.x * config.TILE_SIZE
+                    qix.vis_y = qix.y * config.TILE_SIZE
+                    # Randomize velocity direction
+                    qix.vel_x = 1 if random.random() > 0.5 else -1
+                    qix.vel_y = 1 if random.random() > 0.5 else -1
     
     def handle_input(self):
         """Process player input."""
@@ -607,24 +652,20 @@ class QixGame:
                 # Menu state input
                 if self.game_state == GameState.MENU:
                     if event.key == pygame.K_UP:
-                        self.menu_selection = (self.menu_selection - 1) % 3
+                        self.menu_selection = (self.menu_selection - 1) % 2
                     elif event.key == pygame.K_DOWN:
-                        self.menu_selection = (self.menu_selection + 1) % 3
+                        self.menu_selection = (self.menu_selection + 1) % 2
                     elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
-                        difficulty_map = {0: Difficulty.EASY, 1: Difficulty.MEDIUM, 2: Difficulty.HARD}
+                        difficulty_map = {0: Difficulty.NORMAL, 1: Difficulty.HARD}
                         self.selected_difficulty = difficulty_map[self.menu_selection]
                         self._initialize_game(self.selected_difficulty)
                     # Keep number key shortcuts
                     elif event.key == pygame.K_1:
                         self.menu_selection = 0
-                        self.selected_difficulty = Difficulty.EASY
+                        self.selected_difficulty = Difficulty.NORMAL
                         self._initialize_game(self.selected_difficulty)
                     elif event.key == pygame.K_2:
                         self.menu_selection = 1
-                        self.selected_difficulty = Difficulty.MEDIUM
-                        self._initialize_game(self.selected_difficulty)
-                    elif event.key == pygame.K_3:
-                        self.menu_selection = 2
                         self.selected_difficulty = Difficulty.HARD
                         self._initialize_game(self.selected_difficulty)
                 
@@ -632,7 +673,7 @@ class QixGame:
                 elif self.game_state in (GameState.GAMEOVER, GameState.WIN):
                     if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
                         self.game_state = GameState.MENU
-                        self.menu_selection = 1  # Reset to medium
+                        self.menu_selection = 0  # Reset to normal
             
             elif event.type == pygame.VIDEORESIZE:
                 # Handle window resize
@@ -728,9 +769,11 @@ class QixGame:
                 self.player.start_trail(self.player.y, self.player.x)
         
         # Check collision with Qix while drawing
-        if self.player.is_drawing and (ny, nx) == (self.qix.y, self.qix.x):
-            self._handle_player_death()
-            return
+        if self.player.is_drawing:
+            for qix in self.qix_list:
+                if (ny, nx) == (qix.y, qix.x):
+                    self._handle_player_death()
+                    return
         
         # Move player
         self.player.x, self.player.y = nx, ny
@@ -759,7 +802,9 @@ class QixGame:
     
     def _complete_trail(self):
         """Complete and commit the current trail."""
-        self.trail_mgr.commit_trail(self.player.trail, (self.qix.y, self.qix.x))
+        # Get all Qix positions
+        qix_positions = [(qix.y, qix.x) for qix in self.qix_list]
+        self.trail_mgr.commit_trail(self.player.trail, qix_positions)
         self.perimeter_mgr.update()
         self._remap_sparx_indices()
         self.player.trail.clear()
@@ -767,17 +812,22 @@ class QixGame:
         
         # Teleport player to nearest perimeter if out of bounds
         self._teleport_player_to_perimeter_if_needed()
+        
+        # Move any Qix that got trapped in FILLED areas
+        self._relocate_trapped_qix()
     
     def update_qix(self):
-        """Update Qix movement."""
-        self.qix.move_timer += 1
-        if self.qix.move_timer >= config.QIX_SPEED:
-            self.qix.move(self.grid)
-            self.qix.move_timer = 0
-        
-        # Check trail collision
-        if (self.qix.y, self.qix.x) in self.player.trail:
-            self._handle_player_death()
+        """Update all Qix movement."""
+        for qix in self.qix_list:
+            qix.move_timer += 1
+            if qix.move_timer >= config.QIX_SPEED:
+                qix.move(self.grid)
+                qix.move_timer = 0
+            
+            # Check trail collision
+            if (qix.y, qix.x) in self.player.trail:
+                self._handle_player_death()
+                return
     
     def update_sparx(self):
         """Update all Sparx movement and collisions."""
@@ -875,30 +925,35 @@ class QixGame:
             px = x * tile_size
             py = y * tile_size
             # Center the rock image on the tile
-            rock_offset = (tile_size - scaled_rock.get_width()) // 2
-            self.screen.blit(scaled_rock, (px + rock_offset, py + rock_offset))
+            rock_offset_x = (tile_size - scaled_rock.get_width()) // 2
+            rock_offset_y = (tile_size - scaled_rock.get_height()) // 2
+            self.screen.blit(scaled_rock, (px + rock_offset_x, py + rock_offset_y))
         
-        # Draw player
+        # Draw player (centered on tile)
         self.player.update_visual_position(tile_size)
         scaled_player = self._scale_image(self.player_img, config.TILE_SIZE + 6)
-        player_offset = (config.TILE_SIZE + 6) * scale / 2
+        player_offset_x = scaled_player.get_width() / 2
+        player_offset_y = scaled_player.get_height() / 2
         self.screen.blit(scaled_player, 
-                        (self.player.vis_x - player_offset, self.player.vis_y - player_offset))
+                        (self.player.vis_x - player_offset_x, self.player.vis_y - player_offset_y))
         
         # Draw Qix
-        self.qix.update_visual_position()
         scaled_qix = self._scale_image(self.qix_img, config.TILE_SIZE + 8)
-        qix_offset = (config.TILE_SIZE + 8) * scale / 2
-        self.screen.blit(scaled_qix, 
-                        (self.qix.vis_x * scale - qix_offset, self.qix.vis_y * scale - qix_offset))
+        qix_offset_x = scaled_qix.get_width() / 2
+        qix_offset_y = scaled_qix.get_height() / 2
+        for qix in self.qix_list:
+            qix.update_visual_position()
+            self.screen.blit(scaled_qix, 
+                            (qix.vis_x * scale - qix_offset_x, qix.vis_y * scale - qix_offset_y))
         
-        # Draw Sparx
+        # Draw Sparx (centered on tile)
         scaled_sparx = self._scale_image(self.sparx_img, config.TILE_SIZE + 6)
-        sparx_offset = (config.TILE_SIZE + 6) * scale / 2
+        sparx_offset_x = scaled_sparx.get_width() / 2
+        sparx_offset_y = scaled_sparx.get_height() / 2
         for sparx in self.sparx_list:
             sparx.update_visual_position()
             self.screen.blit(scaled_sparx, 
-                           (sparx.vis_x * scale - sparx_offset, sparx.vis_y * scale - sparx_offset))
+                           (sparx.vis_x * scale - sparx_offset_x, sparx.vis_y * scale - sparx_offset_y))
         
         # Draw HUD text
         fill_pct = int(self.grid.calculate_fill_percentage() * 100)
@@ -913,7 +968,7 @@ class QixGame:
     
     def check_game_over(self) -> bool:
         """Check for win/loss conditions."""
-        if self.player.lives <= 0:
+        if self.player.lives < 1:
             print("Game Over - You Lost!")
             self.game_state = GameState.GAMEOVER
             return True
@@ -945,9 +1000,8 @@ class QixGame:
         self.screen.blit(select_text, select_rect)
         
         difficulties = [
-            ("EASY (9 Lives)", 0),
-            ("MEDIUM (6 Lives)", 1),
-            ("HARD (3 Lives)", 2)
+            ("NORMAL (2 Sparx, 1 Qix)", 0),
+            ("HARD (3 Sparx, 2 Qix)", 1)
         ]
         
         y_offset += int(45 * scale)
@@ -1025,7 +1079,7 @@ class QixGame:
         self.screen.blit(title_text, title_rect)
         
         # Stats
-        difficulty_names = {Difficulty.EASY: "EASY", Difficulty.MEDIUM: "MEDIUM", Difficulty.HARD: "HARD"}
+        difficulty_names = {Difficulty.NORMAL: "NORMAL", Difficulty.HARD: "HARD"}
         diff_text = self.menu_font.render(
             f"Difficulty: {difficulty_names[self.selected_difficulty]}", 
             True, 
