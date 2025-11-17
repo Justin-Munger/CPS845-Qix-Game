@@ -496,15 +496,16 @@ class QixGame:
             for y, x in self.player.trail:
                 self.grid.set(y, x, TileState.FILLED)
             
-            # Find smallest empty region and fill it
+            # Find all empty regions after trail is marked
             all_empty = []
             for y in range(self.grid.height):
                 for x in range(self.grid.width):
                     if self.grid.tiles[y][x] == TileState.EMPTY:
                         all_empty.append((y, x))
             
+            # If there are empty tiles, find and fill smallest region
             if all_empty:
-                # Find all regions
+                # Find all separate regions
                 regions = []
                 remaining = set(all_empty)
                 
@@ -515,11 +516,31 @@ class QixGame:
                         regions.append(region)
                         remaining -= region
                 
-                # Fill smallest region
-                if regions:
+                # Only fill if we found regions AND there's more than one region OR the region doesn't contain all empty space
+                if regions and len(regions) > 1:
+                    # Multiple regions - fill the smallest one
                     smallest = min(regions, key=len)
+                    print(f"Filling smallest region: {len(smallest)} tiles out of {len(all_empty)} total")
                     for y, x in smallest:
                         self.grid.set(y, x, TileState.FILLED)
+                elif regions and len(regions) == 1:
+                    # Only one region exists
+                    # Check if any Qix are in this region
+                    region = regions[0]
+                    qix_in_region = any((qix.y, qix.x) in region for qix in self.qix_list)
+                    
+                    if not qix_in_region:
+                        # No Qix in the only region - this means trail enclosed no space
+                        # Just keep the trail as border, don't fill anything
+                        print("Trail has no interior space - keeping as border only")
+                    else:
+                        # Qix are in the only region - this is the main play area
+                        # Don't fill it
+                        print("Trail created but main play area remains")
+                else:
+                    print("No valid regions to fill")
+            else:
+                print("No empty tiles remain")
             
             # Clear trail
             self.player.trail.clear()
