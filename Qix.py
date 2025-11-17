@@ -419,6 +419,8 @@ def move_sparx():
         if drawing and new_pos == trail_start_pos:
             print("Sparx hit trail! Trail cancelled.")
             lifeforce -= 1
+            sparx["dir"] *= -1
+            sparx["cooldown"] = 3
             reset_trail()
             drawing = False
             player_y, player_x = trail_start_pos
