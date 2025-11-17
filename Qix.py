@@ -1,6 +1,5 @@
 """
-Qix-like Game - A territory claiming game where players draw lines to capture areas
-while avoiding enemies (Qix and Sparx).
+Optimized Qix-like Game - High performance version
 """
 
 import pygame
@@ -12,11 +11,10 @@ from enum import IntEnum
 
 
 # ============================================================================
-# CONSTANTS AND ENUMS
+# CONSTANTS
 # ============================================================================
 
 class TileState(IntEnum):
-    """Represents the state of a grid tile."""
     EMPTY = 0
     BORDER = 1
     FILLED = 2
@@ -24,7 +22,6 @@ class TileState(IntEnum):
 
 
 class GameState(IntEnum):
-    """Represents the current state of the game."""
     MENU = 0
     PLAYING = 1
     GAMEOVER = 2
@@ -32,44 +29,23 @@ class GameState(IntEnum):
 
 
 class Difficulty(IntEnum):
-    """Represents game difficulty levels."""
     NORMAL = 0
     HARD = 1
 
 
 @dataclass
 class GameConfig:
-    """Configuration settings for the game."""
-    # Grid settings
     TILE_SIZE: int = 8
     GRID_WIDTH: int = 80
     GRID_HEIGHT: int = 60
-    
-    # Display settings
     FPS: int = 60
     HUD_HEIGHT: int = 20
-    WINDOW_SCALE: float = 1.0  # Adjustable window scale
-    
-    # Game rules
+    WINDOW_SCALE: float = 1.0
     FILL_THRESHOLD: float = 0.75
-    INITIAL_LIVES: int = 9
-    
-    # Movement speeds (frames between moves - higher = slower)
     PLAYER_SPEED: int = 3
     QIX_SPEED: int = 4
     SPARX_SPEED: int = 5
     SPARX_COOLDOWN: int = 3
-    
-    # Colors
-    COL_EMPTY: Tuple[int, int, int] = (10, 10, 40)
-    COL_BORDER: Tuple[int, int, int] = (40, 150, 40)
-    COL_FILLED: Tuple[int, int, int] = (40, 150, 40)
-    COL_TRAIL: Tuple[int, int, int] = (255, 200, 0)
-    COL_PLAYER: Tuple[int, int, int] = (255, 255, 255)
-    COL_QIX: Tuple[int, int, int] = (200, 50, 50)
-    COL_PERIMETER: Tuple[int, int, int] = (200, 200, 200)
-    COL_HUD_BG: Tuple[int, int, int] = (255, 255, 255)
-    COL_HUD_TEXT: Tuple[int, int, int] = (0, 0, 0)
     
     @property
     def screen_width(self) -> int:
@@ -89,77 +65,46 @@ class GameConfig:
 
 
 # ============================================================================
-# UTILITY CLASSES
+# OPTIMIZED GRID
 # ============================================================================
 
 class Grid:
-    """Manages the game grid and tile states."""
+    __slots__ = ['width', 'height', 'tiles', '_fill_cache', '_cache_valid']
     
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
-        self.tiles = [[TileState.EMPTY for _ in range(width)] for _ in range(height)]
+        self.tiles = [[TileState.EMPTY] * width for _ in range(height)]
+        self._fill_cache = 0.0
+        self._cache_valid = False
         self._initialize_borders()
     
     def _initialize_borders(self):
-        """Set up the perimeter borders."""
         for x in range(self.width):
             self.tiles[0][x] = TileState.BORDER
             self.tiles[self.height - 1][x] = TileState.BORDER
         for y in range(self.height):
             self.tiles[y][0] = TileState.BORDER
             self.tiles[y][self.width - 1] = TileState.BORDER
+        self._cache_valid = False
     
     def in_bounds(self, y: int, x: int) -> bool:
-        """Check if coordinates are within grid bounds."""
         return 0 <= x < self.width and 0 <= y < self.height
     
     def get(self, y: int, x: int) -> TileState:
-        """Get tile state at position."""
         if not self.in_bounds(y, x):
             return TileState.BORDER
         return self.tiles[y][x]
     
     def set(self, y: int, x: int, state: TileState):
-        """Set tile state at position."""
         if self.in_bounds(y, x):
             self.tiles[y][x] = state
-    
-    def flood_fill(self, start_positions: List[Tuple[int, int]]) -> Set[Tuple[int, int]]:
-        """
-        Return set of tiles reachable from start positions via 4-neighbor moves
-        across tiles that are not FILLED or BORDER.
-        """
-        visited = set()
-        queue = deque()
-        
-        for sy, sx in start_positions:
-            if not self.in_bounds(sy, sx):
-                continue
-            if (sy, sx) in visited:
-                continue
-            if self.get(sy, sx) in (TileState.FILLED, TileState.BORDER):
-                continue
-            visited.add((sy, sx))
-            queue.append((sy, sx))
-        
-        while queue:
-            y, x = queue.popleft()
-            for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                ny, nx = y + dy, x + dx
-                if not self.in_bounds(ny, nx):
-                    continue
-                if (ny, nx) in visited:
-                    continue
-                if self.get(ny, nx) in (TileState.FILLED, TileState.BORDER):
-                    continue
-                visited.add((ny, nx))
-                queue.append((ny, nx))
-        
-        return visited
+            self._cache_valid = False
     
     def calculate_fill_percentage(self) -> float:
-        """Calculate percentage of non-border tiles that are filled."""
+        if self._cache_valid:
+            return self._fill_cache
+        
         total = 0
         filled = 0
         for row in self.tiles:
@@ -168,335 +113,125 @@ class Grid:
                     total += 1
                     if tile == TileState.FILLED:
                         filled += 1
-        return filled / total if total > 0 else 0.0
+        
+        self._fill_cache = filled / total if total > 0 else 0.0
+        self._cache_valid = True
+        return self._fill_cache
+    
+    def flood_fill_fast(self, start_y: int, start_x: int) -> Set[Tuple[int, int]]:
+        """Optimized flood fill from single start point."""
+        if not self.in_bounds(start_y, start_x):
+            return set()
+        if self.tiles[start_y][start_x] in (TileState.FILLED, TileState.BORDER):
+            return set()
+        
+        visited = set()
+        stack = [(start_y, start_x)]
+        visited.add((start_y, start_x))
+        
+        while stack:
+            y, x = stack.pop()
+            
+            for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                ny, nx = y + dy, x + dx
+                if (ny, nx) in visited:
+                    continue
+                if not self.in_bounds(ny, nx):
+                    continue
+                if self.tiles[ny][nx] in (TileState.FILLED, TileState.BORDER):
+                    continue
+                
+                visited.add((ny, nx))
+                stack.append((ny, nx))
+        
+        return visited
 
 
 # ============================================================================
-# GAME ENTITIES
+# ENTITIES
 # ============================================================================
 
 class Player:
-    """Represents the player character."""
+    __slots__ = ['x', 'y', 'vis_x', 'vis_y', 'lives', 'is_drawing', 'trail', 
+                 'trail_start', 'last_key', 'move_timer']
     
     def __init__(self, x: int, y: int, lives: int = 9):
         self.x = x
         self.y = y
-        self.vis_x = float(x * GameConfig.TILE_SIZE)
-        self.vis_y = float(y * GameConfig.TILE_SIZE)
+        self.vis_x = float(x)
+        self.vis_y = float(y)
         self.lives = lives
         self.is_drawing = False
-        self.trail: List[Tuple[int, int]] = []
-        self.trail_start: Optional[Tuple[int, int]] = None
-        self.last_key: Optional[int] = None
-        self.move_timer = 0
-    
-    def take_damage(self):
-        """Reduce player lives by 1."""
-        self.lives -= 1
-        print(f"Player hit! Lives remaining: {self.lives}")
-    
-    def start_trail(self, y: int, x: int):
-        """Begin drawing a trail."""
-        self.is_drawing = True
         self.trail = []
-        self.trail_start = (y, x)
-        print(f"Trail started at {self.trail_start}")
-    
-    def reset_trail(self, grid: Grid):
-        """Clear the current trail from the grid."""
-        for y, x in self.trail:
-            if grid.get(y, x) == TileState.TRAIL:
-                grid.set(y, x, TileState.EMPTY)
-        self.trail.clear()
-        self.is_drawing = False
-    
-    def update_visual_position(self, tile_size: int):
-        """Smoothly interpolate visual position toward actual position."""
-        target_x = self.x * tile_size
-        target_y = self.y * tile_size
-        self.vis_x += (target_x - self.vis_x) * 0.4
-        self.vis_y += (target_y - self.vis_y) * 0.4
+        self.trail_start = None
+        self.last_key = None
+        self.move_timer = 0
 
 
 class Qix:
-    """Represents the main enemy (Qix) that roams the play area."""
+    __slots__ = ['y', 'x', 'vel_y', 'vel_x', 'vis_x', 'vis_y', 'move_timer']
     
-    def __init__(self, y: int, x: int, tile_size: int = 8):
+    def __init__(self, y: int, x: int):
         self.y = y
         self.x = x
         self.vel_y = 1
         self.vel_x = 1
-        self.tile_size = tile_size
-        self.vis_x = float(x * tile_size)
-        self.vis_y = float(y * tile_size)
+        self.vis_x = float(x)
+        self.vis_y = float(y)
         self.move_timer = 0
-    
-    def move(self, grid: Grid):
-        """Move the Qix with random walk behavior."""
-        # Occasionally change direction randomly
-        if random.random() < 0.02:
-            if random.random() < 0.5:
-                self.vel_y *= -1
-            if random.random() < 0.5:
-                self.vel_x *= -1
-        
-        ny = self.y + self.vel_y
-        nx = self.x + self.vel_x
-        
-        # Bounce off FILLED or BORDER tiles
-        if not grid.in_bounds(ny, nx) or grid.get(ny, nx) in (TileState.FILLED, TileState.BORDER):
-            if not grid.in_bounds(ny, nx) or grid.get(ny, nx) == TileState.BORDER:
-                self.vel_y *= -1
-                self.vel_x *= -1
-            else:
-                # Reverse only the offending axis
-                if not grid.in_bounds(ny, self.x) or grid.get(ny, self.x) in (TileState.FILLED, TileState.BORDER):
-                    self.vel_y *= -1
-                if not grid.in_bounds(self.y, nx) or grid.get(self.y, nx) in (TileState.FILLED, TileState.BORDER):
-                    self.vel_x *= -1
-            
-            ny = self.y + self.vel_y
-            nx = self.x + self.vel_x
-        
-        # Only move if destination is empty or trail
-        if grid.in_bounds(ny, nx) and grid.get(ny, nx) in (TileState.EMPTY, TileState.TRAIL):
-            self.y, self.x = ny, nx
-    
-    def update_visual_position(self):
-        """Smoothly interpolate visual position toward actual position."""
-        target_x = self.x * self.tile_size
-        target_y = self.y * self.tile_size
-        self.vis_x += (target_x - self.vis_x) * 0.3
-        self.vis_y += (target_y - self.vis_y) * 0.3
 
 
 class Sparx:
-    """Represents a Sparx enemy that patrols the perimeter."""
+    __slots__ = ['pos', 'direction', 'index', 'vis_x', 'vis_y', 'cooldown', 'move_timer']
     
-    def __init__(self, pos: Tuple[int, int], direction: int, index: int, tile_size: int = 8):
+    def __init__(self, pos: Tuple[int, int], direction: int, index: int):
         self.pos = pos
-        self.direction = direction  # 1 = clockwise, -1 = counterclockwise
+        self.direction = direction
         self.index = index
-        self.tile_size = tile_size
-        self.vis_x = float(pos[1] * tile_size)
-        self.vis_y = float(pos[0] * tile_size)
-        self.cooldown = 0
-    
-    def move(self, ordered_perimeter: List[Tuple[int, int]]):
-        """Move one step along the ordered perimeter path."""
-        if not ordered_perimeter:
-            return
-        
-        self.index = (self.index + self.direction) % len(ordered_perimeter)
-        self.pos = ordered_perimeter[self.index]
-        
-        if self.cooldown > 0:
-            self.cooldown -= 1
-    
-    def update_visual_position(self):
-        """Smoothly interpolate visual position toward actual position."""
-        target_x = self.pos[1] * self.tile_size
-        target_y = self.pos[0] * self.tile_size
-        self.vis_x += (target_x - self.vis_x) * 0.2
-        self.vis_y += (target_y - self.vis_y) * 0.2
+        self.vis_x = float(pos[1])
+        self.vis_y = float(pos[0])
+        self.cooldown = 10
+        self.move_timer = 0
 
 
 # ============================================================================
-# GAME LOGIC
-# ============================================================================
-
-class PerimeterManager:
-    """Manages the player's movement perimeter."""
-    
-    def __init__(self, grid: Grid):
-        self.grid = grid
-        self.perimeter: Set[Tuple[int, int]] = set()
-        self.ordered_perimeter: List[Tuple[int, int]] = []
-        self.update()
-    
-    def update(self):
-        """Recompute the perimeter based on current grid state."""
-        self.perimeter = self._compute_perimeter()
-        self.ordered_perimeter = self._build_ordered_perimeter()
-    
-    def _compute_perimeter(self) -> Set[Tuple[int, int]]:
-        """Find all non-empty tiles adjacent to empty tiles."""
-        allowed = set()
-        for y in range(self.grid.height):
-            for x in range(self.grid.width):
-                if self.grid.get(y, x) == TileState.EMPTY:
-                    # Check 8-neighbor adjacency
-                    for dy in (-1, 0, 1):
-                        for dx in (-1, 0, 1):
-                            ny, nx = y + dy, x + dx
-                            if self.grid.in_bounds(ny, nx) and self.grid.get(ny, nx) != TileState.EMPTY:
-                                allowed.add((ny, nx))
-        return allowed
-    
-    def _build_ordered_perimeter(self) -> List[Tuple[int, int]]:
-        """Build a contiguous ordered list of perimeter tiles."""
-        if not self.perimeter:
-            return []
-        
-        perim_set = set(self.perimeter)
-        ordered = []
-        
-        # Start from top-leftmost tile
-        current = min(perim_set, key=lambda p: (p[0], p[1]))
-        prev = None
-        ordered.append(current)
-        
-        # Walk around the perimeter (clockwise)
-        directions = [(-1, 0), (0, 1), (1, 0), (0, -1)]
-        
-        while True:
-            found_next = False
-            for dy, dx in directions:
-                ny, nx = current[0] + dy, current[1] + dx
-                if (ny, nx) in perim_set and (ny, nx) != prev:
-                    prev, current = current, (ny, nx)
-                    ordered.append(current)
-                    found_next = True
-                    break
-            
-            if not found_next or current == ordered[0]:
-                break
-        
-        return ordered
-
-
-class CollisionDetector:
-    """Handles collision detection logic."""
-    
-    @staticmethod
-    def player_crossed_segment(old_pos: Tuple[int, int], new_pos: Tuple[int, int], 
-                               player_pos: Tuple[int, int]) -> bool:
-        """
-        Detect if player passed through a segment between two positions.
-        Works for horizontal/vertical moves.
-        """
-        oy, ox = old_pos
-        ny, nx = new_pos
-        py, px = player_pos
-        
-        # Horizontal movement
-        if oy == ny == py:
-            return (ox < px < nx) or (nx < px < ox)
-        
-        # Vertical movement
-        if ox == nx == px:
-            return (oy < py < ny) or (ny < py < oy)
-        
-        return False
-
-
-class TrailManager:
-    """Manages trail creation and area filling."""
-    
-    def __init__(self, grid: Grid):
-        self.grid = grid
-    
-    def commit_trail(self, trail: List[Tuple[int, int]], qix_positions: List[Tuple[int, int]]) -> int:
-        """
-        Commit the trail and fill captured areas.
-        Returns the number of newly filled tiles.
-        """
-        if not trail:
-            return 0
-        
-        # Handle single-tile trail
-        if len(trail) == 1 and not self._is_single_tile_valid(trail[0]):
-            self.grid.set(trail[0][0], trail[0][1], TileState.EMPTY)
-            return 0
-        
-        # Mark trail as filled
-        for y, x in trail:
-            self.grid.set(y, x, TileState.FILLED)
-        
-        # Flood fill from ALL Qix positions to find reachable empty tiles
-        qix_reachable = self.grid.flood_fill(qix_positions)
-        
-        # Count empty areas on each side
-        all_empty = set()
-        for y in range(self.grid.height):
-            for x in range(self.grid.width):
-                if self.grid.get(y, x) == TileState.EMPTY:
-                    all_empty.add((y, x))
-        
-        non_qix_empty = all_empty - qix_reachable
-        
-        # Determine which side to fill (the smaller area)
-        if len(non_qix_empty) < len(qix_reachable):
-            # Fill the side WITHOUT any Qix (smaller area)
-            area_to_fill = non_qix_empty
-        else:
-            # Fill the side WITH the Qix (smaller area)
-            area_to_fill = qix_reachable
-        
-        # Fill the smaller area
-        newly_filled = 0
-        for y, x in area_to_fill:
-            self.grid.set(y, x, TileState.FILLED)
-            newly_filled += 1
-        
-        return newly_filled
-    
-    def _is_single_tile_valid(self, pos: Tuple[int, int]) -> bool:
-        """Check if a single-tile trail has enough adjacent perimeter tiles."""
-        y, x = pos
-        adjacent_count = 0
-        for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
-            ny, nx = y + dy, x + dx
-            if self.grid.get(ny, nx) in (TileState.BORDER, TileState.FILLED):
-                adjacent_count += 1
-        return adjacent_count >= 2
-
-
-# ============================================================================
-# MAIN GAME CLASS
+# OPTIMIZED GAME
 # ============================================================================
 
 class QixGame:
-    """Main game controller."""
-    
     def __init__(self):
-        self.config = config
+        self.config = GameConfig()
         self.game_state = GameState.MENU
         self.selected_difficulty = Difficulty.NORMAL
-        self.menu_selection = 0  # 0=Normal, 1=Hard
+        self.menu_selection = 0
         
-        # Initialize Pygame
         pygame.init()
+        # Disable resizable and fullscreen
         self.screen = pygame.display.set_mode(
-            (config.screen_width, config.screen_height + config.scaled_hud_height),
-            pygame.RESIZABLE
+            (self.config.screen_width, self.config.screen_height + self.config.scaled_hud_height)
         )
         pygame.display.set_caption("The Qix Game")
         self.clock = pygame.time.Clock()
         self._update_fonts()
-        
-        # Load assets
         self._load_assets()
         
-        # Game entities (initialized when starting game)
+        # Game state
         self.grid = None
-        self.perimeter_mgr = None
-        self.trail_mgr = None
-        self.collision = None
         self.player = None
         self.qix_list = []
         self.sparx_list = []
+        self.perimeter = set()
+        self.ordered_perimeter = []
         
         self.running = True
     
     def _update_fonts(self):
-        """Update font sizes based on window scale."""
-        self.font = pygame.font.SysFont("consolas", int(18 * self.config.WINDOW_SCALE), bold=True)
-        self.title_font = pygame.font.SysFont("consolas", int(42 * self.config.WINDOW_SCALE), bold=True)
-        self.menu_font = pygame.font.SysFont("consolas", int(24 * self.config.WINDOW_SCALE), bold=True)
+        scale = self.config.WINDOW_SCALE
+        self.font = pygame.font.SysFont("consolas", int(18 * scale), bold=True)
+        self.title_font = pygame.font.SysFont("consolas", int(42 * scale), bold=True)
+        self.menu_font = pygame.font.SysFont("consolas", int(24 * scale), bold=True)
     
     def _load_assets(self):
-        """Load game images."""
         try:
             self.background_img = pygame.image.load("water.png").convert()
             self.land_img = pygame.image.load("grass.png").convert()
@@ -504,181 +239,118 @@ class QixGame:
             self.player_img = pygame.image.load("bird.png").convert_alpha()
             self.qix_img = pygame.image.load("octopus.png").convert_alpha()
             self.sparx_img = pygame.image.load("starfish.png").convert_alpha()
-        except pygame.error as e:
-            print(f"Warning: Could not load image: {e}")
-            # Create placeholder surfaces if images don't exist
-            tile_size = config.TILE_SIZE
-            self.background_img = pygame.Surface((tile_size, tile_size))
+        except:
+            size = self.config.TILE_SIZE
+            self.background_img = pygame.Surface((size, size))
             self.background_img.fill((10, 10, 40))
-            self.land_img = pygame.Surface((tile_size, tile_size))
+            self.land_img = pygame.Surface((size, size))
             self.land_img.fill((40, 150, 40))
-            self.rock_img = pygame.Surface((tile_size, tile_size))
+            self.rock_img = pygame.Surface((size, size))
             self.rock_img.fill((200, 200, 200))
-            self.player_img = pygame.Surface((tile_size, tile_size))
+            self.player_img = pygame.Surface((size, size))
             self.player_img.fill((255, 255, 255))
-            self.qix_img = pygame.Surface((tile_size, tile_size))
+            self.qix_img = pygame.Surface((size, size))
             self.qix_img.fill((200, 50, 50))
-            self.sparx_img = pygame.Surface((tile_size, tile_size))
+            self.sparx_img = pygame.Surface((size, size))
             self.sparx_img.fill((255, 100, 0))
     
-    def _scale_image(self, image: pygame.Surface, size: int) -> pygame.Surface:
-        """Scale an image to the current window scale."""
-        scaled_size = int(size * self.config.WINDOW_SCALE)
-        return pygame.transform.scale(image, (scaled_size, scaled_size))
-    
     def _initialize_game(self, difficulty: Difficulty):
-        """Initialize or reset the game with the selected difficulty."""
-        self.grid = Grid(config.GRID_WIDTH, config.GRID_HEIGHT)
-        self.perimeter_mgr = PerimeterManager(self.grid)
-        self.trail_mgr = TrailManager(self.grid)
-        self.collision = CollisionDetector()
+        self.grid = Grid(self.config.GRID_WIDTH, self.config.GRID_HEIGHT)
         
-        # Initialize player with 9 lives for all difficulties
-        start_x = config.GRID_WIDTH // 2
-        start_y = config.GRID_HEIGHT - 1
+        start_x = self.config.GRID_WIDTH // 2
+        start_y = self.config.GRID_HEIGHT - 1
         self.player = Player(start_x, start_y, lives=9)
         
-        # Initialize Qix enemies based on difficulty
+        # Initialize Qix
         self.qix_list = []
         if difficulty == Difficulty.NORMAL:
-            # Normal: 1 Qix
-            self.qix_list.append(Qix(config.GRID_HEIGHT // 3, config.GRID_WIDTH // 3, config.TILE_SIZE))
-        else:  # HARD
-            # Hard: 2 Qix
-            self.qix_list.append(Qix(config.GRID_HEIGHT // 3, config.GRID_WIDTH // 3, config.TILE_SIZE))
-            self.qix_list.append(Qix(config.GRID_HEIGHT * 2 // 3, config.GRID_WIDTH * 2 // 3, config.TILE_SIZE))
+            self.qix_list.append(Qix(self.config.GRID_HEIGHT // 3, self.config.GRID_WIDTH // 3))
+        else:
+            self.qix_list.append(Qix(self.config.GRID_HEIGHT // 3, self.config.GRID_WIDTH // 3))
+            self.qix_list.append(Qix(self.config.GRID_HEIGHT * 2 // 3, self.config.GRID_WIDTH * 2 // 3))
         
         # Initialize Sparx
+        self._compute_perimeter()
         self.sparx_list = []
         self._initialize_sparx(difficulty)
         
         self.game_state = GameState.PLAYING
     
+    def _compute_perimeter(self):
+        """Fast perimeter computation."""
+        self.perimeter = set()
+        
+        for y in range(self.grid.height):
+            for x in range(self.grid.width):
+                if self.grid.tiles[y][x] == TileState.EMPTY:
+                    # Check 8-neighbors
+                    for dy in (-1, 0, 1):
+                        for dx in (-1, 0, 1):
+                            ny, nx = y + dy, x + dx
+                            if self.grid.in_bounds(ny, nx) and self.grid.tiles[ny][nx] != TileState.EMPTY:
+                                self.perimeter.add((ny, nx))
+                                break
+        
+        # Build ordered perimeter
+        if self.perimeter:
+            self.ordered_perimeter = self._build_ordered_perimeter()
+        else:
+            self.ordered_perimeter = []
+    
+    def _build_ordered_perimeter(self) -> List[Tuple[int, int]]:
+        """Build contiguous ordered perimeter."""
+        if not self.perimeter:
+            return []
+        
+        perim_set = set(self.perimeter)
+        ordered = []
+        current = min(perim_set, key=lambda p: (p[0], p[1]))
+        prev = None
+        ordered.append(current)
+        
+        directions = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+        
+        max_iterations = len(perim_set) * 2
+        iterations = 0
+        
+        while iterations < max_iterations:
+            iterations += 1
+            found = False
+            
+            for dy, dx in directions:
+                ny, nx = current[0] + dy, current[1] + dx
+                if (ny, nx) in perim_set and (ny, nx) != prev:
+                    prev, current = current, (ny, nx)
+                    ordered.append(current)
+                    found = True
+                    break
+            
+            if not found or current == ordered[0]:
+                break
+        
+        return ordered
+    
     def _initialize_sparx(self, difficulty: Difficulty):
-        """Create Sparx enemies based on difficulty."""
-        if not self.perimeter_mgr.ordered_perimeter:
+        if not self.ordered_perimeter:
             return
         
-        # Find position opposite to player
-        target_y = 0 if self.player.y > config.GRID_HEIGHT // 2 else config.GRID_HEIGHT - 1
-        target_x = config.GRID_WIDTH - 1 - self.player.x
+        target_y = 0 if self.player.y > self.config.GRID_HEIGHT // 2 else self.config.GRID_HEIGHT - 1
+        target_x = self.config.GRID_WIDTH - 1 - self.player.x
         
-        # Find nearest perimeter tile
-        best_idx = min(
-            range(len(self.perimeter_mgr.ordered_perimeter)),
-            key=lambda i: abs(self.perimeter_mgr.ordered_perimeter[i][0] - target_y) + 
-                         abs(self.perimeter_mgr.ordered_perimeter[i][1] - target_x)
-        )
-        start_pos = self.perimeter_mgr.ordered_perimeter[best_idx]
+        best_idx = min(range(len(self.ordered_perimeter)),
+                      key=lambda i: abs(self.ordered_perimeter[i][0] - target_y) + 
+                                   abs(self.ordered_perimeter[i][1] - target_x))
+        start_pos = self.ordered_perimeter[best_idx]
         
-        if difficulty == Difficulty.NORMAL:
-            # Normal: 2 Sparx (clockwise and counterclockwise)
-            sparx1 = Sparx(start_pos, 1, best_idx, config.TILE_SIZE)
-            sparx1.move_timer = 0
-            sparx1.cooldown = 10  # Give initial cooldown to prevent instant hit
-            self.sparx_list.append(sparx1)
-            
-            sparx2 = Sparx(start_pos, -1, best_idx, config.TILE_SIZE)
-            sparx2.move_timer = 0
-            sparx2.cooldown = 10  # Give initial cooldown to prevent instant hit
-            self.sparx_list.append(sparx2)
-        else:  # HARD
-            # Hard: 3 Sparx
-            sparx1 = Sparx(start_pos, 1, best_idx, config.TILE_SIZE)
-            sparx1.move_timer = 0
-            sparx1.cooldown = 10  # Give initial cooldown to prevent instant hit
-            self.sparx_list.append(sparx1)
-            
-            sparx2 = Sparx(start_pos, -1, best_idx, config.TILE_SIZE)
-            sparx2.move_timer = 0
-            sparx2.cooldown = 10  # Give initial cooldown to prevent instant hit
-            self.sparx_list.append(sparx2)
-            
-            # Third sparx starts at a different position
-            third_idx = (best_idx + len(self.perimeter_mgr.ordered_perimeter) // 2) % len(self.perimeter_mgr.ordered_perimeter)
-            third_pos = self.perimeter_mgr.ordered_perimeter[third_idx]
-            sparx3 = Sparx(third_pos, 1, third_idx, config.TILE_SIZE)
-            sparx3.move_timer = 0
-            sparx3.cooldown = 10  # Give initial cooldown to prevent instant hit
-            self.sparx_list.append(sparx3)
-    
-    def _remap_sparx_indices(self):
-        """Update Sparx positions after perimeter changes."""
-        if not self.perimeter_mgr.ordered_perimeter:
-            return
+        self.sparx_list.append(Sparx(start_pos, 1, best_idx))
+        self.sparx_list.append(Sparx(start_pos, -1, best_idx))
         
-        for sparx in self.sparx_list:
-            sy, sx = sparx.pos
-            best_idx = min(
-                range(len(self.perimeter_mgr.ordered_perimeter)),
-                key=lambda i: abs(self.perimeter_mgr.ordered_perimeter[i][0] - sy) + 
-                             abs(self.perimeter_mgr.ordered_perimeter[i][1] - sx)
-            )
-            sparx.index = best_idx
-            sparx.pos = self.perimeter_mgr.ordered_perimeter[best_idx]
-    
-    def _teleport_player_to_perimeter_if_needed(self):
-        """Teleport player to nearest perimeter tile if they're out of bounds."""
-        if (self.player.y, self.player.x) in self.perimeter_mgr.perimeter:
-            return  # Player is on valid perimeter
-        
-        # Find nearest perimeter tile using Manhattan distance
-        if not self.perimeter_mgr.perimeter:
-            return
-        
-        nearest = min(
-            self.perimeter_mgr.perimeter,
-            key=lambda pos: abs(pos[0] - self.player.y) + abs(pos[1] - self.player.x)
-        )
-        
-        print(f"Teleporting player from ({self.player.y}, {self.player.x}) to {nearest}")
-        self.player.y, self.player.x = nearest
-        self.player.vis_x = self.player.x * config.scaled_tile_size
-        self.player.vis_y = self.player.y * config.scaled_tile_size
-    
-    def _relocate_trapped_qix(self):
-        """Move any Qix that are in FILLED or BORDER tiles to EMPTY tiles."""
-        try:
-            for qix in self.qix_list:
-                try:
-                    current_tile = self.grid.get(qix.y, qix.x)
-                    
-                    # Simple check: If Qix is NOT in an EMPTY tile, relocate it
-                    if current_tile != TileState.EMPTY:
-                        print(f"Qix at ({qix.y}, {qix.x}) is in {current_tile} tile - relocating")
-                        
-                        # Find all EMPTY tiles
-                        empty_tiles = []
-                        for y in range(self.grid.height):
-                            for x in range(self.grid.width):
-                                if self.grid.get(y, x) == TileState.EMPTY:
-                                    empty_tiles.append((y, x))
-                        
-                        if empty_tiles:
-                            # Find closest empty tile
-                            nearest_empty = min(
-                                empty_tiles,
-                                key=lambda pos: abs(pos[0] - qix.y) + abs(pos[1] - qix.x)
-                            )
-                            print(f"  → Moving Qix to {nearest_empty}")
-                            qix.y, qix.x = nearest_empty
-                            qix.vis_x = float(qix.x * config.TILE_SIZE)
-                            qix.vis_y = float(qix.y * config.TILE_SIZE)
-                            # Randomize velocity direction
-                            qix.vel_x = 1 if random.random() > 0.5 else -1
-                            qix.vel_y = 1 if random.random() > 0.5 else -1
-                        else:
-                            print(f"  → WARNING: No empty tiles found!")
-                    else:
-                        print(f"Qix at ({qix.y}, {qix.x}) is in EMPTY tile - OK")
-                except Exception as e:
-                    print(f"Error relocating individual Qix: {e}")
-                    continue
-        except Exception as e:
-            print(f"Error in _relocate_trapped_qix: {e}")
+        if difficulty == Difficulty.HARD:
+            third_idx = (best_idx + len(self.ordered_perimeter) // 2) % len(self.ordered_perimeter)
+            third_pos = self.ordered_perimeter[third_idx]
+            self.sparx_list.append(Sparx(third_pos, 1, third_idx))
     
     def handle_input(self):
-        """Process player input."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
@@ -686,43 +358,30 @@ class QixGame:
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
                 
-                # Menu state input
                 if self.game_state == GameState.MENU:
                     if event.key == pygame.K_UP:
                         self.menu_selection = (self.menu_selection - 1) % 2
                     elif event.key == pygame.K_DOWN:
                         self.menu_selection = (self.menu_selection + 1) % 2
-                    elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
-                        difficulty_map = {0: Difficulty.NORMAL, 1: Difficulty.HARD}
-                        self.selected_difficulty = difficulty_map[self.menu_selection]
-                        self._initialize_game(self.selected_difficulty)
-                    # Keep number key shortcuts
-                    elif event.key == pygame.K_1:
-                        self.menu_selection = 0
-                        self.selected_difficulty = Difficulty.NORMAL
-                        self._initialize_game(self.selected_difficulty)
-                    elif event.key == pygame.K_2:
-                        self.menu_selection = 1
-                        self.selected_difficulty = Difficulty.HARD
-                        self._initialize_game(self.selected_difficulty)
+                    elif event.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_1, pygame.K_2):
+                        if event.key == pygame.K_1:
+                            self.menu_selection = 0
+                        elif event.key == pygame.K_2:
+                            self.menu_selection = 1
+                        
+                        difficulty = Difficulty.NORMAL if self.menu_selection == 0 else Difficulty.HARD
+                        self.selected_difficulty = difficulty
+                        self._initialize_game(difficulty)
                 
-                # Game over/win state input
                 elif self.game_state in (GameState.GAMEOVER, GameState.WIN):
-                    if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                    if event.key in (pygame.K_RETURN, pygame.K_SPACE):
                         self.game_state = GameState.MENU
-                        self.menu_selection = 0  # Reset to normal
-            
-            elif event.type == pygame.VIDEORESIZE:
-                # Handle window resize
-                self._handle_resize(event.w, event.h)
+                        self.menu_selection = 0
         
-        # Only return movement input if playing
         if self.game_state != GameState.PLAYING:
             return 0, 0, False
         
         keys = pygame.key.get_pressed()
-        
-        # Movement keys
         key_mapping = {
             pygame.K_LEFT: (-1, 0),
             pygame.K_RIGHT: (1, 0),
@@ -730,14 +389,12 @@ class QixGame:
             pygame.K_DOWN: (0, 1)
         }
         
-        # Update last pressed key
         for key, (dx, dy) in key_mapping.items():
             if keys[key]:
                 if self.player.last_key is None or self.player.last_key != key:
                     self.player.last_key = key
                 break
         
-        # Apply movement
         dx, dy = 0, 0
         if self.player.last_key is not None:
             dx, dy = key_mapping[self.player.last_key]
@@ -746,35 +403,9 @@ class QixGame:
         
         return dx, dy, keys[pygame.K_SPACE]
     
-    def _handle_resize(self, width: int, height: int):
-        """Handle window resize event."""
-        # Calculate new scale based on width (maintaining aspect ratio)
-        base_width = config.GRID_WIDTH * config.TILE_SIZE
-        base_height = config.GRID_HEIGHT * config.TILE_SIZE + config.HUD_HEIGHT
-        
-        scale_x = width / base_width
-        scale_y = (height - config.HUD_HEIGHT) / base_height
-        
-        # Use the smaller scale to maintain aspect ratio
-        new_scale = min(scale_x, scale_y, 3.0)  # Max scale of 3.0
-        new_scale = max(new_scale, 0.5)  # Min scale of 0.5
-        
-        self.config.WINDOW_SCALE = new_scale
-        
-        # Update screen
-        self.screen = pygame.display.set_mode(
-            (self.config.screen_width, self.config.screen_height + self.config.scaled_hud_height),
-            pygame.RESIZABLE
-        )
-        
-        # Update fonts
-        self._update_fonts()
-    
-    def update_player(self, dx: int, dy: int, trail_key_pressed: bool):
-        """Update player position and trail."""
-        # Throttle movement
+    def update_player(self, dx: int, dy: int, trail_key: bool):
         self.player.move_timer += 1
-        if self.player.move_timer < config.PLAYER_SPEED:
+        if self.player.move_timer < self.config.PLAYER_SPEED:
             return
         self.player.move_timer = 0
         
@@ -784,28 +415,28 @@ class QixGame:
         nx = self.player.x + dx
         ny = self.player.y + dy
         
-        # Check valid movement
         can_move = (
-            self.grid.in_bounds(ny, nx) and 
-            (
-                (ny, nx) in self.perimeter_mgr.perimeter or
-                (trail_key_pressed and self.grid.get(ny, nx) == TileState.EMPTY) or
-                self.grid.get(ny, nx) == TileState.TRAIL
+            self.grid.in_bounds(ny, nx) and (
+                (ny, nx) in self.perimeter or
+                (trail_key and self.grid.tiles[ny][nx] == TileState.EMPTY) or
+                self.grid.tiles[ny][nx] == TileState.TRAIL
             )
         )
         
         if not can_move:
             return
         
-        current_tile = self.grid.get(self.player.y, self.player.x)
-        next_tile = self.grid.get(ny, nx)
+        current_tile = self.grid.tiles[self.player.y][self.player.x]
+        next_tile = self.grid.tiles[ny][nx]
         
-        # Start drawing trail when moving from border/filled to empty
+        # Start trail
         if not self.player.is_drawing and next_tile == TileState.EMPTY:
             if current_tile in (TileState.BORDER, TileState.FILLED):
-                self.player.start_trail(self.player.y, self.player.x)
+                self.player.trail_start = (self.player.y, self.player.x)
+                self.player.is_drawing = True
+                self.player.trail = []
         
-        # Check collision with Qix while drawing
+        # Check Qix collision while drawing
         if self.player.is_drawing:
             for qix in self.qix_list:
                 if (ny, nx) == (qix.y, qix.x):
@@ -815,279 +446,295 @@ class QixGame:
         # Move player
         self.player.x, self.player.y = nx, ny
         
-        # Update trail
+        # Handle trail
         if self.player.is_drawing:
-            if self.grid.get(self.player.y, self.player.x) == TileState.TRAIL:
+            if self.grid.tiles[self.player.y][self.player.x] == TileState.TRAIL:
                 # Crossed own trail
-                print("Crossed own trail!")
                 self._handle_player_death()
-            elif self.grid.get(self.player.y, self.player.x) == TileState.EMPTY:
-                # Add to trail
+                return
+            elif self.grid.tiles[self.player.y][self.player.x] == TileState.EMPTY:
                 self.grid.set(self.player.y, self.player.x, TileState.TRAIL)
                 self.player.trail.append((self.player.y, self.player.x))
         
-        # Complete trail when returning to border/filled
-        if self.player.is_drawing and self.grid.get(self.player.y, self.player.x) in (TileState.BORDER, TileState.FILLED):
+        # Complete trail
+        if self.player.is_drawing and self.grid.tiles[self.player.y][self.player.x] in (TileState.BORDER, TileState.FILLED):
             self._complete_trail()
     
     def _handle_player_death(self):
-        """Handle player death scenario."""
-        self.player.take_damage()
-        self.player.reset_trail(self.grid)
+        self.player.lives -= 1
+        self._reset_trail()
         if self.player.trail_start:
             self.player.y, self.player.x = self.player.trail_start
     
+    def _reset_trail(self):
+        for y, x in self.player.trail:
+            if self.grid.tiles[y][x] == TileState.TRAIL:
+                self.grid.set(y, x, TileState.EMPTY)
+        self.player.trail.clear()
+        self.player.is_drawing = False
+    
     def _complete_trail(self):
-        """Complete and commit the current trail."""
+        """Optimized trail completion with crash prevention."""
         try:
-            # Get all Qix positions
-            qix_positions = [(qix.y, qix.x) for qix in self.qix_list]
+            if not self.player.trail:
+                self.player.is_drawing = False
+                return
             
-            # Commit the trail and fill areas
-            self.trail_mgr.commit_trail(self.player.trail, qix_positions)
+            # Mark trail as filled
+            for y, x in self.player.trail:
+                self.grid.set(y, x, TileState.FILLED)
             
-            # Update perimeter
-            self.perimeter_mgr.update()
-            self._remap_sparx_indices()
+            # Find smallest empty region and fill it
+            all_empty = []
+            for y in range(self.grid.height):
+                for x in range(self.grid.width):
+                    if self.grid.tiles[y][x] == TileState.EMPTY:
+                        all_empty.append((y, x))
+            
+            if all_empty:
+                # Find all regions
+                regions = []
+                remaining = set(all_empty)
+                
+                while remaining:
+                    start_y, start_x = remaining.pop()
+                    region = self.grid.flood_fill_fast(start_y, start_x)
+                    if region:
+                        regions.append(region)
+                        remaining -= region
+                
+                # Fill smallest region
+                if regions:
+                    smallest = min(regions, key=len)
+                    for y, x in smallest:
+                        self.grid.set(y, x, TileState.FILLED)
             
             # Clear trail
             self.player.trail.clear()
             self.player.is_drawing = False
             
-            # Teleport player if needed
-            self._teleport_player_to_perimeter_if_needed()
+            # Update perimeter
+            self._compute_perimeter()
+            self._remap_sparx()
             
-            # Relocate any trapped Qix
-            self._relocate_trapped_qix()
+            # Relocate trapped Qix
+            self._relocate_qix()
             
         except Exception as e:
-            print(f"ERROR in _complete_trail: {e}")
-            import traceback
-            traceback.print_exc()
-            # Reset trail state to prevent game from breaking
-            self.player.trail.clear()
-            self.player.is_drawing = False
+            print(f"Trail completion error: {e}")
+            self._reset_trail()
+    
+    def _relocate_qix(self):
+        """Simple, crash-proof Qix relocation."""
+        for qix in self.qix_list:
+            if self.grid.tiles[qix.y][qix.x] != TileState.EMPTY:
+                # Find nearest empty tile
+                empty_tiles = [(y, x) for y in range(self.grid.height) for x in range(self.grid.width)
+                              if self.grid.tiles[y][x] == TileState.EMPTY]
+                
+                if empty_tiles:
+                    nearest = min(empty_tiles, key=lambda p: abs(p[0] - qix.y) + abs(p[1] - qix.x))
+                    qix.y, qix.x = nearest
+                    qix.vis_x = float(qix.x)
+                    qix.vis_y = float(qix.y)
+                    qix.vel_x = 1 if random.random() > 0.5 else -1
+                    qix.vel_y = 1 if random.random() > 0.5 else -1
+    
+    def _remap_sparx(self):
+        if not self.ordered_perimeter:
+            return
+        
+        for sparx in self.sparx_list:
+            sy, sx = sparx.pos
+            best_idx = min(range(len(self.ordered_perimeter)),
+                          key=lambda i: abs(self.ordered_perimeter[i][0] - sy) + 
+                                       abs(self.ordered_perimeter[i][1] - sx))
+            sparx.index = best_idx
+            sparx.pos = self.ordered_perimeter[best_idx]
     
     def update_qix(self):
-        """Update all Qix movement."""
         for qix in self.qix_list:
             qix.move_timer += 1
-            if qix.move_timer >= config.QIX_SPEED:
-                qix.move(self.grid)
-                qix.move_timer = 0
+            if qix.move_timer < self.config.QIX_SPEED:
+                continue
+            qix.move_timer = 0
             
-            # Check trail collision
+            if random.random() < 0.02:
+                if random.random() < 0.5:
+                    qix.vel_y *= -1
+                if random.random() < 0.5:
+                    qix.vel_x *= -1
+            
+            ny = qix.y + qix.vel_y
+            nx = qix.x + qix.vel_x
+            
+            if not self.grid.in_bounds(ny, nx) or self.grid.tiles[ny][nx] in (TileState.FILLED, TileState.BORDER):
+                if not self.grid.in_bounds(ny, nx) or self.grid.tiles[ny][nx] == TileState.BORDER:
+                    qix.vel_y *= -1
+                    qix.vel_x *= -1
+                else:
+                    if not self.grid.in_bounds(ny, qix.x) or self.grid.tiles[ny][qix.x] in (TileState.FILLED, TileState.BORDER):
+                        qix.vel_y *= -1
+                    if not self.grid.in_bounds(qix.y, nx) or self.grid.tiles[qix.y][nx] in (TileState.FILLED, TileState.BORDER):
+                        qix.vel_x *= -1
+                
+                ny = qix.y + qix.vel_y
+                nx = qix.x + qix.vel_x
+            
+            if self.grid.in_bounds(ny, nx) and self.grid.tiles[ny][nx] in (TileState.EMPTY, TileState.TRAIL):
+                qix.y, qix.x = ny, nx
+            
             if (qix.y, qix.x) in self.player.trail:
                 self._handle_player_death()
-                return
     
     def update_sparx(self):
-        """Update all Sparx movement and collisions."""
         for sparx in self.sparx_list:
-            # Initialize move_timer if it doesn't exist
-            if not hasattr(sparx, 'move_timer'):
-                sparx.move_timer = 0
-            
             sparx.move_timer += 1
-            if sparx.move_timer >= config.SPARX_SPEED:
-                old_pos = sparx.pos
-                sparx.move(self.perimeter_mgr.ordered_perimeter)
-                sparx.move_timer = 0
-                
-                # Check collisions (only when not in cooldown)
-                if sparx.cooldown == 0:
-                    player_pos = (self.player.y, self.player.x)
-                    
-                    if (player_pos == sparx.pos or 
-                        player_pos == old_pos or 
-                        self.collision.player_crossed_segment(old_pos, sparx.pos, player_pos)):
-                        self.player.take_damage()
-                        sparx.direction *= -1
-                        sparx.cooldown = config.SPARX_COOLDOWN
-                        continue
-                
-                # Check trail collision
-                if self.player.is_drawing and sparx.pos == self.player.trail_start:
-                    print("Sparx hit trail!")
-                    self._handle_player_death()
-    
-    def render(self):
-        """Render the game state."""
-        scale = self.config.WINDOW_SCALE
-        tile_size = self.config.scaled_tile_size
-        
-        # Draw background (scaled to fill entire play area)
-        scaled_bg = pygame.transform.scale(self.background_img, 
-                                          (self.config.screen_width, self.config.screen_height))
-        self.screen.blit(scaled_bg, (0, 0))
-        
-        # Draw grid tiles - only BORDER and FILLED
-        for y in range(self.grid.height):
-            for x in range(self.grid.width):
-                tile = self.grid.get(y, x)
-                if tile in (TileState.BORDER, TileState.FILLED):
-                    # Calculate exact pixel position
-                    px = x * tile_size
-                    py = y * tile_size
-                    
-                    # Get source texture coordinates (tile within the original texture)
-                    tx = (x * config.TILE_SIZE) % self.land_img.get_width()
-                    ty = (y * config.TILE_SIZE) % self.land_img.get_height()
-                    
-                    # Extract the tile from the original texture
-                    source_w = min(config.TILE_SIZE, self.land_img.get_width() - tx)
-                    source_h = min(config.TILE_SIZE, self.land_img.get_height() - ty)
-                    
-                    try:
-                        texture_portion = self.land_img.subsurface(pygame.Rect(tx, ty, source_w, source_h))
-                        # Scale to exact tile size (no +1, exact dimensions)
-                        scaled_texture = pygame.transform.scale(texture_portion, (tile_size, tile_size))
-                        self.screen.blit(scaled_texture, (px, py))
-                    except ValueError:
-                        # Fallback if subsurface fails
-                        pygame.draw.rect(self.screen, config.COL_FILLED, 
-                                       pygame.Rect(px, py, tile_size, tile_size))
-        
-        # Draw HUD background using tiled texture
-        hud_y = self.config.screen_height
-        hud_height = self.config.scaled_hud_height
-        
-        # Draw tiled land texture for HUD
-        try:
-            # Calculate how many tiles we need
-            tiles_x = (self.config.screen_width // tile_size) + 2
-            tiles_y = (hud_height // tile_size) + 2
+            if sparx.move_timer < self.config.SPARX_SPEED:
+                continue
+            sparx.move_timer = 0
             
-            for ty in range(tiles_y):
-                for tx in range(tiles_x):
-                    # Get texture coordinates
-                    tex_x = (tx * config.TILE_SIZE) % self.land_img.get_width()
-                    tex_y = (ty * config.TILE_SIZE) % self.land_img.get_height()
-                    
-                    # Extract and scale tile
-                    source_w = min(config.TILE_SIZE, self.land_img.get_width() - tex_x)
-                    source_h = min(config.TILE_SIZE, self.land_img.get_height() - tex_y)
-                    
-                    texture_portion = self.land_img.subsurface(pygame.Rect(tex_x, tex_y, source_w, source_h))
-                    scaled_tile = pygame.transform.scale(texture_portion, (tile_size, tile_size))
-                    
-                    # Draw tile
-                    dest_x = tx * tile_size
-                    dest_y = hud_y + (ty * tile_size)
-                    self.screen.blit(scaled_tile, (dest_x, dest_y))
-        except Exception as e:
-            # Fallback: solid color
-            pygame.draw.rect(self.screen, config.COL_FILLED,
-                           pygame.Rect(0, hud_y, self.config.screen_width, hud_height))
-        
-        # Draw trail (excluding last tile)
-        for y, x in self.player.trail[:-1]:
-            px = x * tile_size
-            py = y * tile_size
-            pygame.draw.rect(self.screen, config.COL_TRAIL, 
-                           pygame.Rect(px, py, tile_size, tile_size))
-        
-        # Draw perimeter markers
-        scaled_rock = self._scale_image(self.rock_img, config.TILE_SIZE)
-        for y, x in self.perimeter_mgr.perimeter:
-            px = x * tile_size
-            py = y * tile_size
-            # Center the rock image on the tile
-            rock_offset_x = (tile_size - scaled_rock.get_width()) // 2
-            rock_offset_y = (tile_size - scaled_rock.get_height()) // 2
-            self.screen.blit(scaled_rock, (px + rock_offset_x, py + rock_offset_y))
-        
-        # Draw player (centered on tile)
-        self.player.update_visual_position(tile_size)
-        scaled_player = self._scale_image(self.player_img, config.TILE_SIZE + 6)
-        player_offset_x = scaled_player.get_width() / 2
-        player_offset_y = scaled_player.get_height() / 2
-        self.screen.blit(scaled_player, 
-                        (self.player.vis_x - player_offset_x, self.player.vis_y - player_offset_y))
-        
-        # Draw Qix
-        scaled_qix = self._scale_image(self.qix_img, config.TILE_SIZE + 8)
-        qix_offset_x = scaled_qix.get_width() / 2
-        qix_offset_y = scaled_qix.get_height() / 2
-        for qix in self.qix_list:
-            qix.update_visual_position()
-            self.screen.blit(scaled_qix, 
-                            (qix.vis_x * scale - qix_offset_x, qix.vis_y * scale - qix_offset_y))
-        
-        # Draw Sparx (centered on tile)
-        scaled_sparx = self._scale_image(self.sparx_img, config.TILE_SIZE + 6)
-        sparx_offset_x = scaled_sparx.get_width() / 2
-        sparx_offset_y = scaled_sparx.get_height() / 2
-        for sparx in self.sparx_list:
-            sparx.update_visual_position()
-            self.screen.blit(scaled_sparx, 
-                           (sparx.vis_x * scale - sparx_offset_x, sparx.vis_y * scale - sparx_offset_y))
-        
-        # Draw HUD text
-        fill_pct = int(self.grid.calculate_fill_percentage() * 100)
-        hud_text = self.font.render(
-            f"Lifeforce: {self.player.lives} Filled: {fill_pct}%", 
-            True, 
-            config.COL_HUD_TEXT
-        )
-        self.screen.blit(hud_text, (int(5 * scale), int(hud_y + 2 * scale)))
-        
-        pygame.display.flip()
+            if not self.ordered_perimeter:
+                continue
+            
+            if sparx.cooldown > 0:
+                sparx.cooldown -= 1
+            
+            old_pos = sparx.pos
+            sparx.index = (sparx.index + sparx.direction) % len(self.ordered_perimeter)
+            sparx.pos = self.ordered_perimeter[sparx.index]
+            
+            if sparx.cooldown == 0:
+                player_pos = (self.player.y, self.player.x)
+                if player_pos == sparx.pos or player_pos == old_pos:
+                    self.player.lives -= 1
+                    sparx.direction *= -1
+                    sparx.cooldown = self.config.SPARX_COOLDOWN
+            
+            if self.player.is_drawing and sparx.pos == self.player.trail_start:
+                self._handle_player_death()
     
     def check_game_over(self) -> bool:
-        """Check for win/loss conditions."""
         if self.player.lives < 1:
-            print("Game Over - You Lost!")
             self.game_state = GameState.GAMEOVER
             return True
         
-        if self.grid.calculate_fill_percentage() >= config.FILL_THRESHOLD:
-            print("You Win!")
+        if self.grid.calculate_fill_percentage() >= self.config.FILL_THRESHOLD:
             self.game_state = GameState.WIN
             return True
         
         return False
     
-    def render_menu(self):
-        """Render the main menu screen."""
-        self.screen.fill((20, 20, 60))
+    def render(self):
+        scale = self.config.WINDOW_SCALE
+        tile_size = self.config.scaled_tile_size
         
+        # Background
+        scaled_bg = pygame.transform.scale(self.background_img, 
+                                          (self.config.screen_width, self.config.screen_height))
+        self.screen.blit(scaled_bg, (0, 0))
+        
+        # Grid tiles (optimized)
+        for y in range(self.grid.height):
+            for x in range(self.grid.width):
+                if self.grid.tiles[y][x] in (TileState.BORDER, TileState.FILLED):
+                    px = x * tile_size
+                    py = y * tile_size
+                    tx = (x * self.config.TILE_SIZE) % self.land_img.get_width()
+                    ty = (y * self.config.TILE_SIZE) % self.land_img.get_height()
+                    
+                    source_w = min(self.config.TILE_SIZE, self.land_img.get_width() - tx)
+                    source_h = min(self.config.TILE_SIZE, self.land_img.get_height() - ty)
+                    
+                    texture = self.land_img.subsurface(pygame.Rect(tx, ty, source_w, source_h))
+                    scaled = pygame.transform.scale(texture, (tile_size, tile_size))
+                    self.screen.blit(scaled, (px, py))
+        
+        # HUD background (tiled)
+        hud_y = self.config.screen_height
+        tiles_x = (self.config.screen_width // tile_size) + 1
+        tiles_y = (self.config.scaled_hud_height // tile_size) + 1
+        
+        for ty in range(tiles_y):
+            for tx in range(tiles_x):
+                tex_x = (tx * self.config.TILE_SIZE) % self.land_img.get_width()
+                tex_y = (ty * self.config.TILE_SIZE) % self.land_img.get_height()
+                
+                source_w = min(self.config.TILE_SIZE, self.land_img.get_width() - tex_x)
+                source_h = min(self.config.TILE_SIZE, self.land_img.get_height() - tex_y)
+                
+                texture = self.land_img.subsurface(pygame.Rect(tex_x, tex_y, source_w, source_h))
+                scaled_tile = pygame.transform.scale(texture, (tile_size, tile_size))
+                self.screen.blit(scaled_tile, (tx * tile_size, hud_y + ty * tile_size))
+        
+        # Trail
+        for y, x in self.player.trail:
+            pygame.draw.rect(self.screen, (255, 200, 0), 
+                           pygame.Rect(x * tile_size, y * tile_size, tile_size, tile_size))
+        
+        # Perimeter
+        scaled_rock = pygame.transform.scale(self.rock_img, (tile_size, tile_size))
+        for y, x in self.perimeter:
+            px = x * tile_size + (tile_size - scaled_rock.get_width()) // 2
+            py = y * tile_size + (tile_size - scaled_rock.get_height()) // 2
+            self.screen.blit(scaled_rock, (px, py))
+        
+        # Player
+        self.player.vis_x += (self.player.x - self.player.vis_x) * 0.4
+        self.player.vis_y += (self.player.y - self.player.vis_y) * 0.4
+        scaled_player = pygame.transform.scale(self.player_img, (tile_size + 6, tile_size + 6))
+        px = self.player.vis_x * tile_size + tile_size // 2 - scaled_player.get_width() // 2
+        py = self.player.vis_y * tile_size + tile_size // 2 - scaled_player.get_height() // 2
+        self.screen.blit(scaled_player, (int(px), int(py)))
+        
+        # Qix
+        scaled_qix = pygame.transform.scale(self.qix_img, (tile_size + 8, tile_size + 8))
+        for qix in self.qix_list:
+            qix.vis_x += (qix.x - qix.vis_x) * 0.3
+            qix.vis_y += (qix.y - qix.vis_y) * 0.3
+            qx = qix.vis_x * tile_size + tile_size // 2 - scaled_qix.get_width() // 2
+            qy = qix.vis_y * tile_size + tile_size // 2 - scaled_qix.get_height() // 2
+            self.screen.blit(scaled_qix, (int(qx), int(qy)))
+        
+        # Sparx
+        scaled_sparx = pygame.transform.scale(self.sparx_img, (tile_size + 6, tile_size + 6))
+        for sparx in self.sparx_list:
+            sparx.vis_x += (sparx.pos[1] - sparx.vis_x) * 0.2
+            sparx.vis_y += (sparx.pos[0] - sparx.vis_y) * 0.2
+            sx = sparx.vis_x * tile_size + tile_size // 2 - scaled_sparx.get_width() // 2
+            sy = sparx.vis_y * tile_size + tile_size // 2 - scaled_sparx.get_height() // 2
+            self.screen.blit(scaled_sparx, (int(sx), int(sy)))
+        
+        # HUD text
+        fill_pct = int(self.grid.calculate_fill_percentage() * 100)
+        hud_text = self.font.render(f"Lifeforce: {self.player.lives} Filled: {fill_pct}%", True, (0, 0, 0))
+        self.screen.blit(hud_text, (int(5 * scale), int(hud_y + 2 * scale)))
+        
+        pygame.display.flip()
+    
+    def render_menu(self):
+        self.screen.fill((20, 20, 60))
         scale = self.config.WINDOW_SCALE
         center_x = self.config.screen_width // 2
         center_y = self.config.screen_height // 2
         
-        # Title
-        title_text = self.title_font.render("THE QIX GAME", True, (255, 255, 100))
-        title_rect = title_text.get_rect(center=(center_x, center_y - int(180 * scale)))
-        self.screen.blit(title_text, title_rect)
+        title = self.title_font.render("THE QIX GAME", True, (255, 255, 100))
+        self.screen.blit(title, title.get_rect(center=(center_x, center_y - int(180 * scale))))
         
-        # Difficulty options
         y_offset = center_y - int(100 * scale)
-        select_text = self.menu_font.render("SELECT DIFFICULTY:", True, (255, 255, 100))
-        select_rect = select_text.get_rect(center=(center_x, y_offset))
-        self.screen.blit(select_text, select_rect)
+        select = self.menu_font.render("SELECT DIFFICULTY:", True, (255, 255, 100))
+        self.screen.blit(select, select.get_rect(center=(center_x, y_offset)))
         
-        difficulties = [
-            ("NORMAL (2 Sparx, 1 Qix)", 0),
-            ("HARD (3 Sparx, 2 Qix)", 1)
-        ]
-        
+        difficulties = [("NORMAL (2 Sparx, 1 Qix)", 0), ("HARD (3 Sparx, 2 Qix)", 1)]
         y_offset += int(45 * scale)
+        
         for text, index in difficulties:
-            # Highlight selected option
-            if index == self.menu_selection:
-                color = (100, 255, 100)
-                prefix = "> "
-            else:
-                color = (200, 200, 200)
-                prefix = "  "
-            
-            option_text = self.menu_font.render(f"{prefix}{text}", True, color)
-            option_rect = option_text.get_rect(center=(center_x, y_offset))
-            self.screen.blit(option_text, option_rect)
+            color = (100, 255, 100) if index == self.menu_selection else (200, 200, 200)
+            prefix = "> " if index == self.menu_selection else "  "
+            option = self.menu_font.render(f"{prefix}{text}", True, color)
+            self.screen.blit(option, option.get_rect(center=(center_x, y_offset)))
             y_offset += int(40 * scale)
         
-        # Instructions
         y_offset = center_y + int(50 * scale)
         instructions = [
             "HOW TO PLAY:",
@@ -1098,107 +745,68 @@ class QixGame:
         ]
         
         for line in instructions:
-            if line == "HOW TO PLAY:":
-                color = (255, 255, 100)
-            else:
-                color = (180, 180, 180)
-            
+            color = (255, 255, 100) if line == "HOW TO PLAY:" else (180, 180, 180)
             text = self.font.render(line, True, color)
-            text_rect = text.get_rect(center=(center_x, y_offset))
-            self.screen.blit(text, text_rect)
+            self.screen.blit(text, text.get_rect(center=(center_x, y_offset)))
             y_offset += int(24 * scale)
         
         pygame.display.flip()
     
     def render_game_over(self):
-        """Render the game over screen."""
         self.screen.fill((60, 20, 20))
-        
         scale = self.config.WINDOW_SCALE
+        center_x = self.config.screen_width // 2
         
-        # Game Over title
-        title_text = self.title_font.render("GAME OVER", True, (255, 100, 100))
-        title_rect = title_text.get_rect(center=(self.config.screen_width // 2, int(150 * scale)))
-        self.screen.blit(title_text, title_rect)
+        title = self.title_font.render("GAME OVER", True, (255, 100, 100))
+        self.screen.blit(title, title.get_rect(center=(center_x, int(150 * scale))))
         
-        # Stats
-        if self.grid:
-            fill_pct = int(self.grid.calculate_fill_percentage() * 100)
-            stats_text = self.menu_font.render(f"Area Captured: {fill_pct}%", True, (255, 255, 255))
-            stats_rect = stats_text.get_rect(center=(self.config.screen_width // 2, int(250 * scale)))
-            self.screen.blit(stats_text, stats_rect)
+        fill_pct = int(self.grid.calculate_fill_percentage() * 100)
+        stats = self.menu_font.render(f"Area Captured: {fill_pct}%", True, (255, 255, 255))
+        self.screen.blit(stats, stats.get_rect(center=(center_x, int(250 * scale))))
         
-        # Continue instruction
-        continue_text = self.menu_font.render("Press ENTER to Continue", True, (200, 200, 200))
-        continue_rect = continue_text.get_rect(center=(self.config.screen_width // 2, int(350 * scale)))
-        self.screen.blit(continue_text, continue_rect)
+        cont = self.menu_font.render("Press ENTER to Continue", True, (200, 200, 200))
+        self.screen.blit(cont, cont.get_rect(center=(center_x, int(350 * scale))))
         
         pygame.display.flip()
     
     def render_win(self):
-        """Render the win screen."""
         self.screen.fill((20, 60, 20))
-        
         scale = self.config.WINDOW_SCALE
+        center_x = self.config.screen_width // 2
         
-        # Win title
-        title_text = self.title_font.render("VICTORY!", True, (100, 255, 100))
-        title_rect = title_text.get_rect(center=(self.config.screen_width // 2, int(150 * scale)))
-        self.screen.blit(title_text, title_rect)
+        title = self.title_font.render("VICTORY!", True, (100, 255, 100))
+        self.screen.blit(title, title.get_rect(center=(center_x, int(150 * scale))))
         
-        # Stats
-        difficulty_names = {Difficulty.NORMAL: "NORMAL", Difficulty.HARD: "HARD"}
-        diff_text = self.menu_font.render(
-            f"Difficulty: {difficulty_names[self.selected_difficulty]}", 
-            True, 
-            (255, 255, 255)
-        )
-        diff_rect = diff_text.get_rect(center=(self.config.screen_width // 2, int(230 * scale)))
-        self.screen.blit(diff_text, diff_rect)
+        diff_names = {Difficulty.NORMAL: "NORMAL", Difficulty.HARD: "HARD"}
+        diff = self.menu_font.render(f"Difficulty: {diff_names[self.selected_difficulty]}", True, (255, 255, 255))
+        self.screen.blit(diff, diff.get_rect(center=(center_x, int(230 * scale))))
         
-        lives_text = self.menu_font.render(
-            f"Lives Remaining: {self.player.lives}", 
-            True, 
-            (255, 255, 255)
-        )
-        lives_rect = lives_text.get_rect(center=(self.config.screen_width // 2, int(280 * scale)))
-        self.screen.blit(lives_text, lives_rect)
+        lives = self.menu_font.render(f"Lives Remaining: {self.player.lives}", True, (255, 255, 255))
+        self.screen.blit(lives, lives.get_rect(center=(center_x, int(280 * scale))))
         
-        if self.grid:
-            fill_pct = int(self.grid.calculate_fill_percentage() * 100)
-            stats_text = self.menu_font.render(f"Area Captured: {fill_pct}%", True, (255, 255, 255))
-            stats_rect = stats_text.get_rect(center=(self.config.screen_width // 2, int(330 * scale)))
-            self.screen.blit(stats_text, stats_rect)
+        fill_pct = int(self.grid.calculate_fill_percentage() * 100)
+        stats = self.menu_font.render(f"Area Captured: {fill_pct}%", True, (255, 255, 255))
+        self.screen.blit(stats, stats.get_rect(center=(center_x, int(330 * scale))))
         
-        # Continue instruction
-        continue_text = self.menu_font.render("Press ENTER to Continue", True, (200, 200, 200))
-        continue_rect = continue_text.get_rect(center=(self.config.screen_width // 2, int(410 * scale)))
-        self.screen.blit(continue_text, continue_rect)
+        cont = self.menu_font.render("Press ENTER to Continue", True, (200, 200, 200))
+        self.screen.blit(cont, cont.get_rect(center=(center_x, int(410 * scale))))
         
         pygame.display.flip()
     
     def run(self):
-        """Main game loop."""
         while self.running:
-            self.clock.tick(config.FPS)
+            self.clock.tick(self.config.FPS)
             
-            # Input
             dx, dy, trail_key = self.handle_input()
             
-            # Update and render based on game state
             if self.game_state == GameState.MENU:
                 self.render_menu()
             
             elif self.game_state == GameState.PLAYING:
-                # Update
                 self.update_player(dx, dy, trail_key)
                 self.update_qix()
                 self.update_sparx()
-                
-                # Render
                 self.render()
-                
-                # Check game over
                 self.check_game_over()
             
             elif self.game_state == GameState.GAMEOVER:
@@ -1215,6 +823,5 @@ class QixGame:
 # ============================================================================
 
 if __name__ == "__main__":
-    config = GameConfig()
     game = QixGame()
     game.run()
