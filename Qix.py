@@ -14,6 +14,7 @@ STATE_GAMEOVER = 2
 difficulties = ["Easy", "Normal", "Hard"]
 selected_diff = 1  # default = Normal
 player_difficulty = None
+lifeforce = 0
 
 def draw_menu():
     screen.fill((10, 10, 40))
@@ -39,7 +40,7 @@ def draw_menu():
 
 
 def handle_menu_input():
-    global game_state, running, selected_diff, player_difficulty
+    global game_state, running, selected_diff, player_difficulty, lifeforce
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -55,12 +56,20 @@ def handle_menu_input():
             elif event.key == pygame.K_RETURN:
                 # lock in difficulty
                 player_difficulty = difficulties[selected_diff]
+                print(selected_diff)
                 print("Difficulty selected:", player_difficulty)
+                init_sparx()
                 game_state = STATE_PLAYING
 
             elif event.key == pygame.K_ESCAPE:
                 running = False
-
+    
+    if selected_diff == 0:
+        lifeforce = 9
+    elif selected_diff == 1:
+        lifeforce = 6
+    elif selected_diff == 2:
+        lifeforce = 3
 
 
 
@@ -242,9 +251,12 @@ def teleport_to_nearest_perimeter():
         player_y, player_x = nearest
 
 def init_sparx():
-    global sparx_list, ordered_perimeter
+    global sparx_list, ordered_perimeter, selected_diff
     sparx_list = []
     if not ordered_perimeter:
+        return
+
+    if selected_diff == 0:
         return
 
     # choose opposite x coordinate on top/bottom border relative to player
@@ -269,21 +281,21 @@ def init_sparx():
     # Find opposite point on the perimeter
     # opposite_i = (best_i + len(ordered_perimeter)//2) % len(ordered_perimeter)
     # opposite_pos = ordered_perimeter[opposite_i]
-
-    sparx_list.append({
-        "pos": start_pos,
-        "dir": -1,  # counterclockwise
-        "idx": best_i,
-        "vis_pos": [start_pos[1]*TILE_SIZE, start_pos[0]*TILE_SIZE],
-        "cooldown": 0
-    })
+    if selected_diff == 2:
+        print("Adding second Sparx")
+        sparx_list.append({
+            "pos": start_pos,
+            "dir": -1,  # counterclockwise
+            "idx": best_i,
+            "vis_pos": [start_pos[1]*TILE_SIZE, start_pos[0]*TILE_SIZE],
+            "cooldown": 0
+        })
 
 
 # Player starts at bottom-center border
 player_x = GRID_W//2
 player_y = GRID_H-1
 on_border = True
-lifeforce = 9
 drawing = False
 trail_cells = []  # list of (y,x) in trail order
 # global variable storing allowed perimeter tiles
@@ -517,7 +529,7 @@ def reset_trail():
 
 # Initialize Sparx on the opposite side of the player
 ordered_perimeter = build_ordered_perimeter(player_perimeter)
-init_sparx()
+
 
 # Main loop
 running = True
@@ -529,6 +541,9 @@ while running:
         draw_menu()
         handle_menu_input()
         continue
+    # if game_state == STATE_PLAYING:
+        # init_sparx()
+    
     for ev in pygame.event.get():
         if ev.type == pygame.QUIT:
             running = False
