@@ -134,7 +134,9 @@ class Grid:
         queue = deque()
         
         for sy, sx in start_positions:
-            if not self.in_bounds(sy, sx) or (sy, sx) in visited:
+            if not self.in_bounds(sy, sx):
+                continue
+            if (sy, sx) in visited:
                 continue
             if self.get(sy, sx) in (TileState.FILLED, TileState.BORDER):
                 continue
@@ -145,7 +147,9 @@ class Grid:
             y, x = queue.popleft()
             for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 ny, nx = y + dy, x + dx
-                if not self.in_bounds(ny, nx) or (ny, nx) in visited:
+                if not self.in_bounds(ny, nx):
+                    continue
+                if (ny, nx) in visited:
                     continue
                 if self.get(ny, nx) in (TileState.FILLED, TileState.BORDER):
                     continue
@@ -569,16 +573,34 @@ class QixGame:
         
         if difficulty == Difficulty.NORMAL:
             # Normal: 2 Sparx (clockwise and counterclockwise)
-            self.sparx_list.append(Sparx(start_pos, 1, best_idx, config.TILE_SIZE))
-            self.sparx_list.append(Sparx(start_pos, -1, best_idx, config.TILE_SIZE))
+            sparx1 = Sparx(start_pos, 1, best_idx, config.TILE_SIZE)
+            sparx1.move_timer = 0
+            sparx1.cooldown = 10  # Give initial cooldown to prevent instant hit
+            self.sparx_list.append(sparx1)
+            
+            sparx2 = Sparx(start_pos, -1, best_idx, config.TILE_SIZE)
+            sparx2.move_timer = 0
+            sparx2.cooldown = 10  # Give initial cooldown to prevent instant hit
+            self.sparx_list.append(sparx2)
         else:  # HARD
             # Hard: 3 Sparx
-            self.sparx_list.append(Sparx(start_pos, 1, best_idx, config.TILE_SIZE))
-            self.sparx_list.append(Sparx(start_pos, -1, best_idx, config.TILE_SIZE))
+            sparx1 = Sparx(start_pos, 1, best_idx, config.TILE_SIZE)
+            sparx1.move_timer = 0
+            sparx1.cooldown = 10  # Give initial cooldown to prevent instant hit
+            self.sparx_list.append(sparx1)
+            
+            sparx2 = Sparx(start_pos, -1, best_idx, config.TILE_SIZE)
+            sparx2.move_timer = 0
+            sparx2.cooldown = 10  # Give initial cooldown to prevent instant hit
+            self.sparx_list.append(sparx2)
+            
             # Third sparx starts at a different position
             third_idx = (best_idx + len(self.perimeter_mgr.ordered_perimeter) // 2) % len(self.perimeter_mgr.ordered_perimeter)
             third_pos = self.perimeter_mgr.ordered_perimeter[third_idx]
-            self.sparx_list.append(Sparx(third_pos, 1, third_idx, config.TILE_SIZE))
+            sparx3 = Sparx(third_pos, 1, third_idx, config.TILE_SIZE)
+            sparx3.move_timer = 0
+            sparx3.cooldown = 10  # Give initial cooldown to prevent instant hit
+            self.sparx_list.append(sparx3)
     
     def _remap_sparx_indices(self):
         """Update Sparx positions after perimeter changes."""
@@ -615,30 +637,45 @@ class QixGame:
         self.player.vis_y = self.player.y * config.scaled_tile_size
     
     def _relocate_trapped_qix(self):
-        """Move any Qix that are trapped in FILLED areas to EMPTY areas."""
-        for qix in self.qix_list:
-            # Check if Qix is in a FILLED or BORDER tile
-            if self.grid.get(qix.y, qix.x) in (TileState.FILLED, TileState.BORDER):
-                # Find nearest EMPTY tile
-                empty_tiles = []
-                for y in range(self.grid.height):
-                    for x in range(self.grid.width):
-                        if self.grid.get(y, x) == TileState.EMPTY:
-                            empty_tiles.append((y, x))
-                
-                if empty_tiles:
-                    # Find closest empty tile
-                    nearest_empty = min(
-                        empty_tiles,
-                        key=lambda pos: abs(pos[0] - qix.y) + abs(pos[1] - qix.x)
-                    )
-                    print(f"Relocating Qix from ({qix.y}, {qix.x}) to {nearest_empty}")
-                    qix.y, qix.x = nearest_empty
-                    qix.vis_x = qix.x * config.TILE_SIZE
-                    qix.vis_y = qix.y * config.TILE_SIZE
-                    # Randomize velocity direction
-                    qix.vel_x = 1 if random.random() > 0.5 else -1
-                    qix.vel_y = 1 if random.random() > 0.5 else -1
+        """Move any Qix that are in FILLED or BORDER tiles to EMPTY tiles."""
+        try:
+            for qix in self.qix_list:
+                try:
+                    current_tile = self.grid.get(qix.y, qix.x)
+                    
+                    # Simple check: If Qix is NOT in an EMPTY tile, relocate it
+                    if current_tile != TileState.EMPTY:
+                        print(f"Qix at ({qix.y}, {qix.x}) is in {current_tile} tile - relocating")
+                        
+                        # Find all EMPTY tiles
+                        empty_tiles = []
+                        for y in range(self.grid.height):
+                            for x in range(self.grid.width):
+                                if self.grid.get(y, x) == TileState.EMPTY:
+                                    empty_tiles.append((y, x))
+                        
+                        if empty_tiles:
+                            # Find closest empty tile
+                            nearest_empty = min(
+                                empty_tiles,
+                                key=lambda pos: abs(pos[0] - qix.y) + abs(pos[1] - qix.x)
+                            )
+                            print(f"  → Moving Qix to {nearest_empty}")
+                            qix.y, qix.x = nearest_empty
+                            qix.vis_x = float(qix.x * config.TILE_SIZE)
+                            qix.vis_y = float(qix.y * config.TILE_SIZE)
+                            # Randomize velocity direction
+                            qix.vel_x = 1 if random.random() > 0.5 else -1
+                            qix.vel_y = 1 if random.random() > 0.5 else -1
+                        else:
+                            print(f"  → WARNING: No empty tiles found!")
+                    else:
+                        print(f"Qix at ({qix.y}, {qix.x}) is in EMPTY tile - OK")
+                except Exception as e:
+                    print(f"Error relocating individual Qix: {e}")
+                    continue
+        except Exception as e:
+            print(f"Error in _relocate_trapped_qix: {e}")
     
     def handle_input(self):
         """Process player input."""
@@ -802,19 +839,34 @@ class QixGame:
     
     def _complete_trail(self):
         """Complete and commit the current trail."""
-        # Get all Qix positions
-        qix_positions = [(qix.y, qix.x) for qix in self.qix_list]
-        self.trail_mgr.commit_trail(self.player.trail, qix_positions)
-        self.perimeter_mgr.update()
-        self._remap_sparx_indices()
-        self.player.trail.clear()
-        self.player.is_drawing = False
-        
-        # Teleport player to nearest perimeter if out of bounds
-        self._teleport_player_to_perimeter_if_needed()
-        
-        # Move any Qix that got trapped in FILLED areas
-        self._relocate_trapped_qix()
+        try:
+            # Get all Qix positions
+            qix_positions = [(qix.y, qix.x) for qix in self.qix_list]
+            
+            # Commit the trail and fill areas
+            self.trail_mgr.commit_trail(self.player.trail, qix_positions)
+            
+            # Update perimeter
+            self.perimeter_mgr.update()
+            self._remap_sparx_indices()
+            
+            # Clear trail
+            self.player.trail.clear()
+            self.player.is_drawing = False
+            
+            # Teleport player if needed
+            self._teleport_player_to_perimeter_if_needed()
+            
+            # Relocate any trapped Qix
+            self._relocate_trapped_qix()
+            
+        except Exception as e:
+            print(f"ERROR in _complete_trail: {e}")
+            import traceback
+            traceback.print_exc()
+            # Reset trail state to prevent game from breaking
+            self.player.trail.clear()
+            self.player.is_drawing = False
     
     def update_qix(self):
         """Update all Qix movement."""
@@ -896,21 +948,37 @@ class QixGame:
                         pygame.draw.rect(self.screen, config.COL_FILLED, 
                                        pygame.Rect(px, py, tile_size, tile_size))
         
-        # Draw HUD background (full width, scaled height)
+        # Draw HUD background using tiled texture
         hud_y = self.config.screen_height
+        hud_height = self.config.scaled_hud_height
         
-        # Create HUD texture by scaling a portion of land texture
+        # Draw tiled land texture for HUD
         try:
-            hud_source = self.land_img.subsurface(pygame.Rect(0, 0, 
-                                                             min(config.TILE_SIZE * 10, self.land_img.get_width()),
-                                                             min(config.TILE_SIZE, self.land_img.get_height())))
-            scaled_hud_texture = pygame.transform.scale(hud_source, 
-                                                        (self.config.screen_width, self.config.scaled_hud_height))
-            self.screen.blit(scaled_hud_texture, (0, hud_y))
-        except ValueError:
-            # Fallback: solid color HUD
+            # Calculate how many tiles we need
+            tiles_x = (self.config.screen_width // tile_size) + 2
+            tiles_y = (hud_height // tile_size) + 2
+            
+            for ty in range(tiles_y):
+                for tx in range(tiles_x):
+                    # Get texture coordinates
+                    tex_x = (tx * config.TILE_SIZE) % self.land_img.get_width()
+                    tex_y = (ty * config.TILE_SIZE) % self.land_img.get_height()
+                    
+                    # Extract and scale tile
+                    source_w = min(config.TILE_SIZE, self.land_img.get_width() - tex_x)
+                    source_h = min(config.TILE_SIZE, self.land_img.get_height() - tex_y)
+                    
+                    texture_portion = self.land_img.subsurface(pygame.Rect(tex_x, tex_y, source_w, source_h))
+                    scaled_tile = pygame.transform.scale(texture_portion, (tile_size, tile_size))
+                    
+                    # Draw tile
+                    dest_x = tx * tile_size
+                    dest_y = hud_y + (ty * tile_size)
+                    self.screen.blit(scaled_tile, (dest_x, dest_y))
+        except Exception as e:
+            # Fallback: solid color
             pygame.draw.rect(self.screen, config.COL_FILLED,
-                           pygame.Rect(0, hud_y, self.config.screen_width, self.config.scaled_hud_height))
+                           pygame.Rect(0, hud_y, self.config.screen_width, hud_height))
         
         # Draw trail (excluding last tile)
         for y, x in self.player.trail[:-1]:
