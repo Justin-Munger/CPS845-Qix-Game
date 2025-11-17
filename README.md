@@ -45,12 +45,12 @@ The Qix Game is a territory-claiming arcade game where you control a marker that
 
 **NORMAL:**
 - 1 Qix
-- 2 Sparx (moving in opposite directions)
+- 2 Sparx
 - 9 Lives
 
 **HARD:**
-- 2 Qix (twice the danger!)
-- 3 Sparx (more border patrol)
+- 2 Qix
+- 3 Sparx
 - 9 Lives
 
 ## Installation
@@ -113,64 +113,6 @@ For the best visual experience, place these image files in the same directory as
 ```bash
    python3 Qix.py
 ```
-
-### Alternative: Double-Click
-
-On most systems, you can double-click `Qix.py` to run it directly (requires Python to be properly installed).
-
-## Strategy Tips
-
-1. **Start Small:** Make small claims initially to learn enemy patterns
-2. **Watch the Sparx:** Time your moves to avoid Sparx on the border
-3. **Corner Strategy:** Enemies move slower in corners - use this to your advantage
-4. **Quick Draws:** Fast, small enclosures are safer than long trails
-5. **Qix Awareness:** Always know where all Qix are before drawing
-6. **Border Extensions:** Small trails (1-2 tiles wide) just extend the border without filling
-7. **Split Strategy:** Try to split the Qix into the smaller area when possible
-
-## Troubleshooting
-
-### Game won't start
-- Verify Python is installed: `python --version`
-- Verify Pygame is installed: `pip list | grep pygame`
-- Reinstall Pygame: `pip install --upgrade pygame`
-
-### Performance issues
-- The game is optimized to run at 60 FPS
-- If experiencing lag, close other applications
-- Reduce system background processes
-
-### Display issues
-- Game window is fixed size (640x500 pixels by default)
-- Ensure your monitor resolution is at least 800x600
-- The game does not support fullscreen mode
-
-## Technical Details
-
-- **Language:** Python 3
-- **Library:** Pygame
-- **Grid Size:** 80x60 tiles
-- **Tile Size:** 8x8 pixels
-- **Target FPS:** 60
-- **Window Size:** 640x500 pixels (including HUD)
-
-## Credits
-
-This is a modern reimplementation of the classic Qix arcade game originally developed by Taito Corporation in 1981. This version is created for educational purposes and includes optimizations for modern systems.
-
-## License
-
-This project is provided as-is for personal and educational use.
-
-## Version History
-
-**v1.0** - Initial release
-- Two difficulty modes
-- Smooth sprite animations
-- Optimized performance
-- Crash-proof gameplay
-- Complete border patrol AI
-
 ---
 
 **Enjoy claiming territory and avoiding the Qix!**
