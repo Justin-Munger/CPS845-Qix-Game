@@ -280,16 +280,18 @@ class QixGame:
         """Fast perimeter computation."""
         self.perimeter = set()
         
+        # First pass: find all tiles adjacent to empty space
         for y in range(self.grid.height):
             for x in range(self.grid.width):
                 if self.grid.tiles[y][x] == TileState.EMPTY:
-                    # Check 8-neighbors
+                    # Check 8-neighbors for non-empty tiles
                     for dy in (-1, 0, 1):
                         for dx in (-1, 0, 1):
+                            if dy == 0 and dx == 0:
+                                continue
                             ny, nx = y + dy, x + dx
                             if self.grid.in_bounds(ny, nx) and self.grid.tiles[ny][nx] != TileState.EMPTY:
                                 self.perimeter.add((ny, nx))
-                                break
         
         # Build ordered perimeter
         if self.perimeter:
@@ -298,35 +300,45 @@ class QixGame:
             self.ordered_perimeter = []
     
     def _build_ordered_perimeter(self) -> List[Tuple[int, int]]:
-        """Build contiguous ordered perimeter."""
+        """Build contiguous ordered perimeter by walking around it."""
         if not self.perimeter:
             return []
         
-        perim_set = set(self.perimeter)
-        ordered = []
-        current = min(perim_set, key=lambda p: (p[0], p[1]))
-        prev = None
-        ordered.append(current)
+        # Start from top-left corner
+        start = min(self.perimeter, key=lambda p: (p[0], p[1]))
         
-        directions = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+        ordered = [start]
+        visited = {start}
+        current = start
         
-        max_iterations = len(perim_set) * 2
-        iterations = 0
+        # Prioritized directions for clockwise traversal
+        directions = [(0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
         
-        while iterations < max_iterations:
-            iterations += 1
-            found = False
+        max_iterations = len(self.perimeter) * 2
+        
+        for _ in range(max_iterations):
+            found_next = False
             
+            # Try each direction to find next perimeter tile
             for dy, dx in directions:
                 ny, nx = current[0] + dy, current[1] + dx
-                if (ny, nx) in perim_set and (ny, nx) != prev:
-                    prev, current = current, (ny, nx)
+                
+                if (ny, nx) in self.perimeter and (ny, nx) not in visited:
+                    current = (ny, nx)
                     ordered.append(current)
-                    found = True
+                    visited.add(current)
+                    found_next = True
                     break
             
-            if not found or current == ordered[0]:
+            # If we've visited all perimeter tiles, stop
+            if not found_next or len(visited) >= len(self.perimeter):
                 break
+        
+        # Ensure we got all perimeter tiles
+        # If some were missed, add them at the end
+        missing = self.perimeter - visited
+        for tile in missing:
+            ordered.append(tile)
         
         return ordered
     
@@ -594,25 +606,61 @@ class QixGame:
                 continue
             sparx.move_timer = 0
             
-            if not self.ordered_perimeter:
+            if not self.ordered_perimeter or len(self.ordered_perimeter) < 2:
                 continue
             
             if sparx.cooldown > 0:
                 sparx.cooldown -= 1
             
             old_pos = sparx.pos
-            sparx.index = (sparx.index + sparx.direction) % len(self.ordered_perimeter)
-            sparx.pos = self.ordered_perimeter[sparx.index]
             
+            # Move to next position in ordered perimeter
+            sparx.index = (sparx.index + sparx.direction) % len(self.ordered_perimeter)
+            new_pos = self.ordered_perimeter[sparx.index]
+            sparx.pos = new_pos
+            
+            # Check player collision (only when not in cooldown)
             if sparx.cooldown == 0:
                 player_pos = (self.player.y, self.player.x)
-                if player_pos == sparx.pos or player_pos == old_pos:
+                
+                # Direct collision
+                if player_pos == new_pos or player_pos == old_pos:
                     self.player.lives -= 1
+                    print(f"Sparx hit player! Lives: {self.player.lives}")
                     sparx.direction *= -1
                     sparx.cooldown = self.config.SPARX_COOLDOWN
+                    continue
+                
+                # Check if player crossed the path
+                if self._player_crossed_segment(old_pos, new_pos, player_pos):
+                    self.player.lives -= 1
+                    print(f"Sparx crossed player! Lives: {self.player.lives}")
+                    sparx.direction *= -1
+                    sparx.cooldown = self.config.SPARX_COOLDOWN
+                    continue
             
-            if self.player.is_drawing and sparx.pos == self.player.trail_start:
+            # Check trail collision (instant, no cooldown)
+            if self.player.is_drawing and new_pos == self.player.trail_start:
+                print("Sparx hit trail start!")
                 self._handle_player_death()
+                return
+    
+    def _player_crossed_segment(self, old_pos: Tuple[int, int], new_pos: Tuple[int, int], 
+                                player_pos: Tuple[int, int]) -> bool:
+        """Check if player crossed between old and new Sparx positions."""
+        oy, ox = old_pos
+        ny, nx = new_pos
+        py, px = player_pos
+        
+        # Horizontal movement
+        if oy == ny == py:
+            return (ox < px < nx) or (nx < px < ox)
+        
+        # Vertical movement
+        if ox == nx == px:
+            return (oy < py < ny) or (ny < py < oy)
+        
+        return False
     
     def check_game_over(self) -> bool:
         if self.player.lives < 1:
