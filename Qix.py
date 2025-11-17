@@ -1,12 +1,8 @@
-"""
-Optimized Qix-like Game - High performance version
-"""
-
 import pygame
 import random
 from collections import deque
 from dataclasses import dataclass
-from typing import List, Set, Tuple, Optional
+from typing import List, Set, Tuple
 from enum import IntEnum
 
 
