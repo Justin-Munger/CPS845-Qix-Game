@@ -1,27 +1,37 @@
 """
-Optimized Qix-like Game - High performance version
+Qix-like Territory Capture Game
+
+A Python implementation of the classic Qix arcade game where players capture
+territory by drawing lines while avoiding enemy entities.
+
+Game Mechanics:
+- Draw lines to capture territory (75% to win)
+- Avoid Qix enemies that roam the play area
+- Avoid Sparx enemies that patrol the perimeter
+- Complete lines by returning to safe territory
 """
 
 import pygame
 import random
-from collections import deque
 from dataclasses import dataclass
-from typing import List, Set, Tuple, Optional
+from typing import List, Set, Tuple
 from enum import IntEnum
 
 
 # ============================================================================
-# CONSTANTS
+# GAME CONSTANTS AND ENUMS
 # ============================================================================
 
 class TileState(IntEnum):
-    EMPTY = 0
-    BORDER = 1
-    FILLED = 2
-    TRAIL = 3
+    """Represents the state of a grid tile."""
+    EMPTY = 0      # Uncaptured territory
+    BORDER = 1     # Initial border or captured perimeter
+    FILLED = 2     # Captured interior territory
+    TRAIL = 3      # Player's active drawing trail
 
 
 class GameState(IntEnum):
+    """Represents the current game state."""
     MENU = 0
     PLAYING = 1
     GAMEOVER = 2
@@ -29,49 +39,75 @@ class GameState(IntEnum):
 
 
 class Difficulty(IntEnum):
-    NORMAL = 0
-    HARD = 1
+    """Game difficulty levels affecting enemy count."""
+    NORMAL = 0  # 1 Qix, 2 Sparx
+    HARD = 1    # 2 Qix, 3 Sparx
 
 
 @dataclass
 class GameConfig:
+    """Configuration settings for game dimensions and timing."""
+    
+    # Grid and display settings
     TILE_SIZE: int = 8
     GRID_WIDTH: int = 80
     GRID_HEIGHT: int = 60
     FPS: int = 60
     HUD_HEIGHT: int = 20
     WINDOW_SCALE: float = 1.0
-    FILL_THRESHOLD: float = 0.75
+    
+    # Game mechanics
+    FILL_THRESHOLD: float = 0.75  # Win condition (75% territory)
+    
+    # Entity speeds (frames between moves)
     PLAYER_SPEED: int = 3
     QIX_SPEED: int = 4
     SPARX_SPEED: int = 5
-    SPARX_COOLDOWN: int = 3
+    SPARX_COOLDOWN: int = 0  # Frames of cooldown after hitting player
     
     @property
     def screen_width(self) -> int:
+        """Calculate scaled screen width."""
         return int(self.GRID_WIDTH * self.TILE_SIZE * self.WINDOW_SCALE)
     
     @property
     def screen_height(self) -> int:
+        """Calculate scaled screen height."""
         return int(self.GRID_HEIGHT * self.TILE_SIZE * self.WINDOW_SCALE)
     
     @property
     def scaled_tile_size(self) -> int:
+        """Calculate scaled tile size for rendering."""
         return int(self.TILE_SIZE * self.WINDOW_SCALE)
     
     @property
     def scaled_hud_height(self) -> int:
+        """Calculate scaled HUD height."""
         return int(self.HUD_HEIGHT * self.WINDOW_SCALE)
 
 
 # ============================================================================
-# OPTIMIZED GRID
+# GRID MANAGEMENT
 # ============================================================================
 
 class Grid:
+    """
+    Manages the game grid state and territory calculations.
+    
+    The grid tracks which tiles are empty, filled, border, or trail.
+    Uses caching to optimize fill percentage calculations.
+    """
+    
     __slots__ = ['width', 'height', 'tiles', '_fill_cache', '_cache_valid']
     
     def __init__(self, width: int, height: int):
+        """
+        Initialize grid with borders around the perimeter.
+        
+        Args:
+            width: Grid width in tiles
+            height: Grid height in tiles
+        """
         self.width = width
         self.height = height
         self.tiles = [[TileState.EMPTY] * width for _ in range(height)]
@@ -80,33 +116,54 @@ class Grid:
         self._initialize_borders()
     
     def _initialize_borders(self):
+        """Set up initial border tiles around the perimeter."""
+        # Top and bottom borders
         for x in range(self.width):
             self.tiles[0][x] = TileState.BORDER
             self.tiles[self.height - 1][x] = TileState.BORDER
+        
+        # Left and right borders
         for y in range(self.height):
             self.tiles[y][0] = TileState.BORDER
             self.tiles[y][self.width - 1] = TileState.BORDER
+        
         self._cache_valid = False
     
     def in_bounds(self, y: int, x: int) -> bool:
+        """Check if coordinates are within grid bounds."""
         return 0 <= x < self.width and 0 <= y < self.height
     
     def get(self, y: int, x: int) -> TileState:
+        """
+        Get tile state at coordinates.
+        
+        Returns BORDER if out of bounds to simplify collision logic.
+        """
         if not self.in_bounds(y, x):
             return TileState.BORDER
         return self.tiles[y][x]
     
     def set(self, y: int, x: int, state: TileState):
+        """Set tile state and invalidate cache."""
         if self.in_bounds(y, x):
             self.tiles[y][x] = state
             self._cache_valid = False
     
     def calculate_fill_percentage(self) -> float:
+        """
+        Calculate percentage of non-border tiles that are filled.
+        
+        Uses caching to avoid recalculating on every frame.
+        
+        Returns:
+            Float between 0.0 and 1.0 representing fill percentage
+        """
         if self._cache_valid:
             return self._fill_cache
         
         total = 0
         filled = 0
+        
         for row in self.tiles:
             for tile in row:
                 if tile != TileState.BORDER:
@@ -119,7 +176,18 @@ class Grid:
         return self._fill_cache
     
     def flood_fill_fast(self, start_y: int, start_x: int) -> Set[Tuple[int, int]]:
-        """Optimized flood fill from single start point."""
+        """
+        Perform flood fill to find connected empty region.
+        
+        Uses iterative stack-based approach for performance.
+        
+        Args:
+            start_y: Starting Y coordinate
+            start_x: Starting X coordinate
+            
+        Returns:
+            Set of (y, x) coordinates in the connected region
+        """
         if not self.in_bounds(start_y, start_x):
             return set()
         if self.tiles[start_y][start_x] in (TileState.FILLED, TileState.BORDER):
@@ -132,8 +200,10 @@ class Grid:
         while stack:
             y, x = stack.pop()
             
+            # Check 4-directional neighbors
             for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 ny, nx = y + dy, x + dx
+                
                 if (ny, nx) in visited:
                     continue
                 if not self.in_bounds(ny, nx):
@@ -148,95 +218,144 @@ class Grid:
 
 
 # ============================================================================
-# ENTITIES
+# GAME ENTITIES
 # ============================================================================
 
 class Player:
+    """
+    Represents the player character.
+    
+    The player moves along the perimeter and can draw trails into empty
+    territory. Completing a trail captures the enclosed area.
+    """
+    
     __slots__ = ['x', 'y', 'vis_x', 'vis_y', 'lives', 'is_drawing', 'trail', 
                  'trail_start', 'last_key', 'move_timer', 'invincible_timer', 
                  'last_move_dx', 'last_move_dy']
     
     def __init__(self, x: int, y: int, lives: int = 9):
-        self.x = x
+        """
+        Initialize player at starting position.
+        
+        Args:
+            x: Starting X coordinate
+            y: Starting Y coordinate
+            lives: Starting life count
+        """
+        self.x = x                      # Grid position
         self.y = y
-        self.vis_x = float(x)
+        self.vis_x = float(x)           # Visual position (interpolated)
         self.vis_y = float(y)
         self.lives = lives
-        self.is_drawing = False
-        self.trail = []
-        self.trail_start = None
-        self.last_key = None
-        self.move_timer = 0
-        self.invincible_timer = 0  # Invincibility frames after hit
-        self.last_move_dx = 0  # Track last movement direction
+        self.is_drawing = False         # Currently drawing a trail
+        self.trail = []                 # List of trail coordinates
+        self.trail_start = None         # Where trail started
+        self.last_key = None            # Last pressed direction key
+        self.move_timer = 0             # Frames until next move
+        self.invincible_timer = 0       # Invincibility frames after hit
+        self.last_move_dx = 0           # Track movement for backtrack prevention
         self.last_move_dy = 0
 
 
 class Qix:
+    """
+    Roaming enemy that moves randomly through empty territory.
+    
+    Contact with Qix while drawing is fatal. Qix bounces off walls
+    and filled territory.
+    """
+    
     __slots__ = ['y', 'x', 'vel_y', 'vel_x', 'vis_x', 'vis_y', 'move_timer']
     
     def __init__(self, y: int, x: int):
+        """Initialize Qix at starting position with random velocity."""
         self.y = y
         self.x = x
-        self.vel_y = 1
-        self.vel_x = 1
-        self.vis_x = float(x)
+        self.vel_y = 1                  # Vertical velocity (-1 or 1)
+        self.vel_x = 1                  # Horizontal velocity (-1 or 1)
+        self.vis_x = float(x)           # Visual position (interpolated)
         self.vis_y = float(y)
-        self.move_timer = 0
+        self.move_timer = 0             # Frames until next move
 
 
 class Sparx:
-    __slots__ = ['pos', 'direction', 'index', 'vis_x', 'vis_y', 'cooldown', 'move_timer', 'last_pos']
+    """
+    Enemy that patrols the perimeter of captured territory.
+    
+    Sparx move along borders and can collide with the player when
+    they're on the perimeter. Each Sparx has a direction preference.
+    """
+    
+    __slots__ = ['pos', 'direction', 'index', 'vis_x', 'vis_y', 
+                 'cooldown', 'move_timer', 'last_pos']
     
     def __init__(self, pos: Tuple[int, int], direction: int, index: int):
+        """
+        Initialize Sparx at perimeter position.
+        
+        Args:
+            pos: Starting (y, x) position
+            direction: Movement preference (1=clockwise, -1=counter-clockwise)
+            index: Sparx identifier
+        """
         self.pos = pos
-        self.direction = direction
+        self.direction = direction      # Clockwise (1) or counter-clockwise (-1)
         self.index = index
-        self.vis_x = float(pos[1])
+        self.vis_x = float(pos[1])      # Visual position (interpolated)
         self.vis_y = float(pos[0])
-        self.cooldown = 10
-        self.move_timer = 0
-        self.last_pos = pos  # Track previous position
+        self.cooldown = 10              # Frames before can hit player again
+        self.move_timer = 0             # Frames until next move
+        self.last_pos = pos             # Previous position for pathfinding
 
 
 # ============================================================================
-# OPTIMIZED GAME
+# MAIN GAME CLASS
 # ============================================================================
 
 class QixGame:
+    """
+    Main game controller managing state, entities, and rendering.
+    
+    Handles the game loop, user input, collision detection, and
+    territory capture mechanics.
+    """
+    
     def __init__(self):
+        """Initialize game with menu state and load assets."""
         self.config = GameConfig()
         self.game_state = GameState.MENU
         self.selected_difficulty = Difficulty.NORMAL
         self.menu_selection = 0
         
+        # Initialize Pygame
         pygame.init()
-        # Disable resizable and fullscreen
         self.screen = pygame.display.set_mode(
-            (self.config.screen_width, self.config.screen_height + self.config.scaled_hud_height)
+            (self.config.screen_width, 
+             self.config.screen_height + self.config.scaled_hud_height)
         )
         pygame.display.set_caption("The Qix Game")
         self.clock = pygame.time.Clock()
         self._update_fonts()
         self._load_assets()
         
-        # Game state
+        # Game state (initialized when game starts)
         self.grid = None
         self.player = None
         self.qix_list = []
         self.sparx_list = []
-        self.perimeter = set()
-        self.ordered_perimeter = []
+        self.perimeter = set()          # Set of all perimeter tiles
         
         self.running = True
     
     def _update_fonts(self):
+        """Initialize fonts with proper scaling."""
         scale = self.config.WINDOW_SCALE
         self.font = pygame.font.SysFont("consolas", int(18 * scale), bold=True)
         self.title_font = pygame.font.SysFont("consolas", int(42 * scale), bold=True)
         self.menu_font = pygame.font.SysFont("consolas", int(24 * scale), bold=True)
     
     def _load_assets(self):
+        """Load image assets or create colored fallbacks."""
         try:
             self.background_img = pygame.image.load("water.png").convert()
             self.land_img = pygame.image.load("grass.png").convert()
@@ -245,6 +364,7 @@ class QixGame:
             self.qix_img = pygame.image.load("octopus.png").convert_alpha()
             self.sparx_img = pygame.image.load("starfish.png").convert_alpha()
         except:
+            # Fallback to colored rectangles if images not found
             size = self.config.TILE_SIZE
             self.background_img = pygame.Surface((size, size))
             self.background_img.fill((10, 10, 40))
@@ -260,34 +380,54 @@ class QixGame:
             self.sparx_img.fill((255, 100, 0))
     
     def _initialize_game(self, difficulty: Difficulty):
+        """
+        Initialize new game with selected difficulty.
+        
+        Args:
+            difficulty: NORMAL or HARD difficulty level
+        """
         self.grid = Grid(self.config.GRID_WIDTH, self.config.GRID_HEIGHT)
         
+        # Place player at bottom center
         start_x = self.config.GRID_WIDTH // 2
         start_y = self.config.GRID_HEIGHT - 1
         self.player = Player(start_x, start_y, lives=9)
         
-        # Initialize Qix
+        # Clear and initialize Qix based on difficulty
         self.qix_list = []
         if difficulty == Difficulty.NORMAL:
-            self.qix_list.append(Qix(self.config.GRID_HEIGHT // 3, self.config.GRID_WIDTH // 3))
-        else:
-            self.qix_list.append(Qix(self.config.GRID_HEIGHT // 3, self.config.GRID_WIDTH // 3))
-            self.qix_list.append(Qix(self.config.GRID_HEIGHT * 2 // 3, self.config.GRID_WIDTH * 2 // 3))
+            self.qix_list.append(Qix(
+                self.config.GRID_HEIGHT // 3, 
+                self.config.GRID_WIDTH // 3
+            ))
+        else:  # HARD
+            self.qix_list.append(Qix(
+                self.config.GRID_HEIGHT // 3, 
+                self.config.GRID_WIDTH // 3
+            ))
+            self.qix_list.append(Qix(
+                self.config.GRID_HEIGHT * 2 // 3, 
+                self.config.GRID_WIDTH * 2 // 3
+            ))
         
-        # Compute perimeter (used by both player and Sparx)
-        self._compute_perimeter()
-        
-        # Initialize Sparx (no longer needs ordered_perimeter)
+        # Clear and compute perimeter, then initialize Sparx
         self.sparx_list = []
+        self._compute_perimeter()
         self._initialize_sparx(difficulty)
         
         self.game_state = GameState.PLAYING
     
     def _compute_perimeter(self):
-        """Fast perimeter computation."""
+        """
+        Calculate all tiles adjacent to empty space.
+        
+        The perimeter consists of all filled/border tiles that are
+        adjacent (including diagonally) to empty tiles. This is where
+        the player and Sparx can move.
+        """
         self.perimeter = set()
         
-        # First pass: find all tiles adjacent to empty space
+        # Find all tiles adjacent to empty space
         for y in range(self.grid.height):
             for x in range(self.grid.width):
                 if self.grid.tiles[y][x] == TileState.EMPTY:
@@ -297,112 +437,21 @@ class QixGame:
                             if dy == 0 and dx == 0:
                                 continue
                             ny, nx = y + dy, x + dx
-                            if self.grid.in_bounds(ny, nx) and self.grid.tiles[ny][nx] != TileState.EMPTY:
+                            if (self.grid.in_bounds(ny, nx) and 
+                                self.grid.tiles[ny][nx] != TileState.EMPTY):
                                 self.perimeter.add((ny, nx))
-        
-        # Build ordered perimeter
-        if self.perimeter:
-            self.ordered_perimeter = self._build_ordered_perimeter()
-        else:
-            self.ordered_perimeter = []
-    
-    def _build_ordered_perimeter(self) -> List[Tuple[int, int]]:
-        """Build a smooth contiguous path that visits every perimeter tile exactly once."""
-        if not self.perimeter:
-            return []
-        
-        # Start from top-left corner
-        start = min(self.perimeter, key=lambda p: (p[0], p[1]))
-        
-        # Use depth-first search to build a complete path
-        ordered = []
-        visited = set()
-        
-        def dfs_build_path(pos):
-            """Recursively build path visiting all adjacent tiles."""
-            if pos in visited:
-                return
-            
-            visited.add(pos)
-            ordered.append(pos)
-            
-            # Get all adjacent perimeter tiles (4-directional first, then diagonals)
-            neighbors = []
-            
-            # Priority order: right, down, left, up (clockwise from right)
-            for dy, dx in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
-                ny, nx = pos[0] + dy, pos[1] + dx
-                if (ny, nx) in self.perimeter and (ny, nx) not in visited:
-                    neighbors.append(((ny, nx), 0))  # 4-directional has priority 0
-            
-            # Add diagonal neighbors with lower priority
-            for dy, dx in [(1, 1), (1, -1), (-1, 1), (-1, -1)]:
-                ny, nx = pos[0] + dy, pos[1] + dx
-                if (ny, nx) in self.perimeter and (ny, nx) not in visited:
-                    neighbors.append(((ny, nx), 1))  # diagonals have priority 1
-            
-            # Sort by priority (4-directional first)
-            neighbors.sort(key=lambda x: x[1])
-            
-            # Visit all neighbors
-            for neighbor, _ in neighbors:
-                dfs_build_path(neighbor)
-        
-        # Start DFS from starting position
-        dfs_build_path(start)
-        
-        # Handle any disconnected tiles
-        unvisited = self.perimeter - visited
-        while unvisited:
-            # Find closest unvisited to last visited
-            if ordered:
-                next_start = min(unvisited, 
-                               key=lambda p: abs(p[0] - ordered[-1][0]) + abs(p[1] - ordered[-1][1]))
-            else:
-                next_start = min(unvisited, key=lambda p: (p[0], p[1]))
-            
-            print(f"Connecting disconnected segment starting at {next_start}")
-            dfs_build_path(next_start)
-            unvisited = self.perimeter - visited
-        
-        print(f"Built perimeter: {len(ordered)} tiles (expected {len(self.perimeter)})")
-        return ordered
-    
-    def _is_valid_perimeter_move(self, from_pos: Tuple[int, int], to_pos: Tuple[int, int]) -> bool:
-        """Check if moving between two perimeter tiles is valid (no gap jumping)."""
-        fy, fx = from_pos
-        ty, tx = to_pos
-        
-        # Calculate distance
-        dy = abs(ty - fy)
-        dx = abs(tx - fx)
-        
-        # Direct neighbors (4-directional) are always valid
-        if dy + dx == 1:
-            return True
-        
-        # Diagonal moves (distance = 2 in Manhattan)
-        if dy == 1 and dx == 1:
-            # Check if the two intermediate tiles provide a valid path
-            # For diagonal A to B, check if path A->C->B or A->D->B exists
-            adj1 = (fy, tx)  # same row as from, same col as to
-            adj2 = (ty, fx)  # same row as to, same col as from
-            
-            adj1_is_perimeter = adj1 in self.perimeter
-            adj2_is_perimeter = adj2 in self.perimeter
-            
-            # At least one path should exist through perimeter tiles
-            return adj1_is_perimeter or adj2_is_perimeter
-        
-        # Larger jumps are not valid
-        return False
     
     def _initialize_sparx(self, difficulty: Difficulty):
-        """Initialize Sparx using perimeter positions (same as player)."""
+        """
+        Create Sparx enemies at perimeter positions.
+        
+        Args:
+            difficulty: Determines number of Sparx (2 for NORMAL, 3 for HARD)
+        """
         if not self.perimeter:
             return
         
-        # Find position opposite to player
+        # Place Sparx opposite to player
         target_y = 0 if self.player.y > self.config.GRID_HEIGHT // 2 else self.config.GRID_HEIGHT - 1
         target_x = self.config.GRID_WIDTH - 1 - self.player.x
         
@@ -410,19 +459,25 @@ class QixGame:
         start_pos = min(self.perimeter, 
                        key=lambda p: abs(p[0] - target_y) + abs(p[1] - target_x))
         
-        # Create Sparx with direction indicators (not index-based)
-        self.sparx_list.append(Sparx(start_pos, 1, 0))  # Clockwise
+        # Create clockwise and counter-clockwise Sparx
+        self.sparx_list.append(Sparx(start_pos, 1, 0))   # Clockwise
         self.sparx_list.append(Sparx(start_pos, -1, 0))  # Counter-clockwise
         
+        # Add third Sparx for hard mode
         if difficulty == Difficulty.HARD:
-            # Third sparx at opposite side
             opposite_y = self.config.GRID_HEIGHT - 1 - target_y
             opposite_x = self.config.GRID_WIDTH - 1 - target_x
             third_pos = min(self.perimeter,
                            key=lambda p: abs(p[0] - opposite_y) + abs(p[1] - opposite_x))
             self.sparx_list.append(Sparx(third_pos, 1, 0))
     
-    def handle_input(self):
+    def handle_input(self) -> Tuple[int, int, bool]:
+        """
+        Process user input for current game state.
+        
+        Returns:
+            Tuple of (dx, dy, space_pressed) for player movement
+        """
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
@@ -430,29 +485,35 @@ class QixGame:
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
                 
+                # Menu input
                 if self.game_state == GameState.MENU:
                     if event.key == pygame.K_UP:
                         self.menu_selection = (self.menu_selection - 1) % 2
                     elif event.key == pygame.K_DOWN:
                         self.menu_selection = (self.menu_selection + 1) % 2
-                    elif event.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_1, pygame.K_2):
+                    elif event.key in (pygame.K_RETURN, pygame.K_SPACE, 
+                                      pygame.K_1, pygame.K_2):
                         if event.key == pygame.K_1:
                             self.menu_selection = 0
                         elif event.key == pygame.K_2:
                             self.menu_selection = 1
                         
-                        difficulty = Difficulty.NORMAL if self.menu_selection == 0 else Difficulty.HARD
+                        difficulty = (Difficulty.NORMAL if self.menu_selection == 0 
+                                    else Difficulty.HARD)
                         self.selected_difficulty = difficulty
                         self._initialize_game(difficulty)
                 
+                # Game over / win input
                 elif self.game_state in (GameState.GAMEOVER, GameState.WIN):
                     if event.key in (pygame.K_RETURN, pygame.K_SPACE):
                         self.game_state = GameState.MENU
                         self.menu_selection = 0
         
+        # Return no input if not playing
         if self.game_state != GameState.PLAYING:
             return 0, 0, False
         
+        # Get continuous key state for movement
         keys = pygame.key.get_pressed()
         key_mapping = {
             pygame.K_LEFT: (-1, 0),
@@ -461,12 +522,14 @@ class QixGame:
             pygame.K_DOWN: (0, 1)
         }
         
+        # Track last pressed key for continuous movement
         for key, (dx, dy) in key_mapping.items():
             if keys[key]:
                 if self.player.last_key is None or self.player.last_key != key:
                     self.player.last_key = key
                 break
         
+        # Get movement from last key
         dx, dy = 0, 0
         if self.player.last_key is not None:
             dx, dy = key_mapping[self.player.last_key]
@@ -476,10 +539,19 @@ class QixGame:
         return dx, dy, keys[pygame.K_SPACE]
     
     def update_player(self, dx: int, dy: int, trail_key: bool):
+        """
+        Update player position and trail state.
+        
+        Args:
+            dx: Horizontal movement direction (-1, 0, 1)
+            dy: Vertical movement direction (-1, 0, 1)
+            trail_key: Whether space bar is held for drawing
+        """
         # Update invincibility timer
         if self.player.invincible_timer > 0:
             self.player.invincible_timer -= 1
         
+        # Handle movement timing
         self.player.move_timer += 1
         if self.player.move_timer < self.config.PLAYER_SPEED:
             return
@@ -490,14 +562,13 @@ class QixGame:
         
         # Prevent moving backwards into own trail
         if self.player.is_drawing and len(self.player.trail) > 0:
-            # Check if trying to move opposite to last move
             if (dx == -self.player.last_move_dx and dy == -self.player.last_move_dy):
-                # Check if moving backwards would hit the trail
                 back_x = self.player.x - self.player.last_move_dx
                 back_y = self.player.y - self.player.last_move_dy
                 if (back_y, back_x) in self.player.trail:
-                    return  # Block backwards movement into trail
+                    return
         
+        # Calculate new position
         nx = self.player.x + dx
         ny = self.player.y + dy
         
@@ -507,31 +578,13 @@ class QixGame:
         current_tile = self.grid.tiles[self.player.y][self.player.x]
         next_tile = self.grid.tiles[ny][nx]
         
-        # CRITICAL FIX: Prevent moving between two border/filled tiles (crossing through gaps)
-        if current_tile in (TileState.BORDER, TileState.FILLED) and next_tile in (TileState.BORDER, TileState.FILLED):
-            if dx != 0:  # Horizontal movement
-                check_y1 = self.player.y - 1
-                check_y2 = self.player.y + 1
-                has_empty_adjacent = (
-                    (self.grid.in_bounds(check_y1, self.player.x) and self.grid.tiles[check_y1][self.player.x] == TileState.EMPTY) or
-                    (self.grid.in_bounds(check_y2, self.player.x) and self.grid.tiles[check_y2][self.player.x] == TileState.EMPTY) or
-                    (self.grid.in_bounds(check_y1, nx) and self.grid.tiles[check_y1][nx] == TileState.EMPTY) or
-                    (self.grid.in_bounds(check_y2, nx) and self.grid.tiles[check_y2][nx] == TileState.EMPTY)
-                )
-            else:  # Vertical movement
-                check_x1 = self.player.x - 1
-                check_x2 = self.player.x + 1
-                has_empty_adjacent = (
-                    (self.grid.in_bounds(self.player.y, check_x1) and self.grid.tiles[self.player.y][check_x1] == TileState.EMPTY) or
-                    (self.grid.in_bounds(self.player.y, check_x2) and self.grid.tiles[self.player.y][check_x2] == TileState.EMPTY) or
-                    (self.grid.in_bounds(ny, check_x1) and self.grid.tiles[ny][check_x1] == TileState.EMPTY) or
-                    (self.grid.in_bounds(ny, check_x2) and self.grid.tiles[ny][check_x2] == TileState.EMPTY)
-                )
-            
-            if not has_empty_adjacent:
+        # Prevent crossing gaps between border tiles
+        if (current_tile in (TileState.BORDER, TileState.FILLED) and 
+            next_tile in (TileState.BORDER, TileState.FILLED)):
+            if not self._has_adjacent_empty(self.player.y, self.player.x, ny, nx, dx != 0):
                 return
         
-        # Normal movement validation
+        # Check if move is valid
         can_move = (
             (ny, nx) in self.perimeter or
             (trail_key and next_tile == TileState.EMPTY) or
@@ -541,14 +594,14 @@ class QixGame:
         if not can_move:
             return
         
-        # Start trail
+        # Start drawing trail
         if not self.player.is_drawing and next_tile == TileState.EMPTY:
             if current_tile in (TileState.BORDER, TileState.FILLED):
                 self.player.trail_start = (self.player.y, self.player.x)
                 self.player.is_drawing = True
                 self.player.trail = []
         
-        # Check Qix collision while drawing (only if not invincible)
+        # Check Qix collision while drawing
         if self.player.is_drawing and self.player.invincible_timer == 0:
             for qix in self.qix_list:
                 if (ny, nx) == (qix.y, qix.x):
@@ -560,28 +613,71 @@ class QixGame:
         self.player.last_move_dx = dx
         self.player.last_move_dy = dy
         
-        # Handle trail
+        # Update trail
         if self.player.is_drawing:
             if self.grid.tiles[self.player.y][self.player.x] == TileState.TRAIL:
-                # Crossed own trail
+                # Crossed own trail - death
                 self._handle_player_death()
                 return
             elif self.grid.tiles[self.player.y][self.player.x] == TileState.EMPTY:
                 self.grid.set(self.player.y, self.player.x, TileState.TRAIL)
                 self.player.trail.append((self.player.y, self.player.x))
         
-        # Complete trail
-        if self.player.is_drawing and self.grid.tiles[self.player.y][self.player.x] in (TileState.BORDER, TileState.FILLED):
+        # Complete trail if reached safety
+        if (self.player.is_drawing and 
+            self.grid.tiles[self.player.y][self.player.x] in (TileState.BORDER, TileState.FILLED)):
             self._complete_trail()
     
+    def _has_adjacent_empty(self, y1: int, x1: int, y2: int, x2: int, 
+                            is_horizontal: bool) -> bool:
+        """
+        Check if movement between two border tiles has adjacent empty space.
+        
+        Prevents player from crossing through diagonal gaps in the border.
+        
+        Args:
+            y1, x1: Starting position
+            y2, x2: Ending position
+            is_horizontal: True if moving horizontally, False if vertical
+            
+        Returns:
+            True if move has adjacent empty space (is valid)
+        """
+        if is_horizontal:
+            check_y1, check_y2 = y1 - 1, y1 + 1
+            return (
+                (self.grid.in_bounds(check_y1, x1) and 
+                 self.grid.tiles[check_y1][x1] == TileState.EMPTY) or
+                (self.grid.in_bounds(check_y2, x1) and 
+                 self.grid.tiles[check_y2][x1] == TileState.EMPTY) or
+                (self.grid.in_bounds(check_y1, x2) and 
+                 self.grid.tiles[check_y1][x2] == TileState.EMPTY) or
+                (self.grid.in_bounds(check_y2, x2) and 
+                 self.grid.tiles[check_y2][x2] == TileState.EMPTY)
+            )
+        else:  # Vertical movement
+            check_x1, check_x2 = x1 - 1, x1 + 1
+            return (
+                (self.grid.in_bounds(y1, check_x1) and 
+                 self.grid.tiles[y1][check_x1] == TileState.EMPTY) or
+                (self.grid.in_bounds(y1, check_x2) and 
+                 self.grid.tiles[y1][check_x2] == TileState.EMPTY) or
+                (self.grid.in_bounds(y2, check_x1) and 
+                 self.grid.tiles[y2][check_x1] == TileState.EMPTY) or
+                (self.grid.in_bounds(y2, check_x2) and 
+                 self.grid.tiles[y2][check_x2] == TileState.EMPTY)
+            )
+    
     def _handle_player_death(self):
+        """Handle player death by removing a life and resetting position."""
         self.player.lives -= 1
-        self.player.invincible_timer = 60  # 1 second of invincibility at 60 FPS
+        self.player.invincible_timer = 60  # 1 second at 60 FPS
         self._reset_trail()
         if self.player.trail_start:
             self.player.y, self.player.x = self.player.trail_start
     
     def _reset_trail(self):
+        """Clear player's active trail and reset drawing state."""
         for y, x in self.player.trail:
             if self.grid.tiles[y][x] == TileState.TRAIL:
                 self.grid.set(y, x, TileState.EMPTY)
@@ -589,7 +685,13 @@ class QixGame:
         self.player.is_drawing = False
     
     def _complete_trail(self):
-        """Optimized trail completion with crash prevention."""
+        """
+        Complete player's trail and fill captured territory.
+        
+        Marks trail as filled, finds disconnected regions, and fills
+        the smallest region (not containing Qix). Updates perimeter
+        and relocates entities as needed.
+        """
         try:
             if not self.player.trail:
                 self.player.is_drawing = False
@@ -599,144 +701,186 @@ class QixGame:
             for y, x in self.player.trail:
                 self.grid.set(y, x, TileState.FILLED)
             
-            # Find all empty regions after trail is marked
-            all_empty = []
-            for y in range(self.grid.height):
-                for x in range(self.grid.width):
-                    if self.grid.tiles[y][x] == TileState.EMPTY:
-                        all_empty.append((y, x))
+            # Find all empty tiles
+            all_empty = [
+                (y, x) for y in range(self.grid.height) 
+                for x in range(self.grid.width)
+                if self.grid.tiles[y][x] == TileState.EMPTY
+            ]
             
-            # If there are empty tiles, find and fill smallest region
+            # Find and fill smallest region without Qix
             if all_empty:
-                # Find all separate regions
-                regions = []
-                remaining = set(all_empty)
+                regions = self._find_empty_regions(all_empty)
                 
-                while remaining:
-                    start_y, start_x = remaining.pop()
-                    region = self.grid.flood_fill_fast(start_y, start_x)
-                    if region:
-                        regions.append(region)
-                        remaining -= region
-                
-                # Only fill if we found regions AND there's more than one region OR the region doesn't contain all empty space
-                if regions and len(regions) > 1:
-                    # Multiple regions - fill the smallest one
+                if len(regions) > 1:
+                    # Multiple regions - fill smallest one
                     smallest = min(regions, key=len)
-                    print(f"Filling smallest region: {len(smallest)} tiles out of {len(all_empty)} total")
                     for y, x in smallest:
                         self.grid.set(y, x, TileState.FILLED)
-                elif regions and len(regions) == 1:
-                    # Only one region exists
-                    # Check if any Qix are in this region
+                elif len(regions) == 1:
+                    # Single region - only fill if no Qix inside
                     region = regions[0]
                     qix_in_region = any((qix.y, qix.x) in region for qix in self.qix_list)
                     
                     if not qix_in_region:
-                        # No Qix in the only region - this means trail enclosed no space
-                        # Just keep the trail as border, don't fill anything
-                        print("Trail has no interior space - keeping as border only")
-                    else:
-                        # Qix are in the only region - this is the main play area
-                        # Don't fill it
-                        print("Trail created but main play area remains")
-                else:
-                    print("No valid regions to fill")
-            else:
-                print("No empty tiles remain")
+                        # Empty region with no Qix - just keep trail as border
+                        pass
             
-            # Clear trail
+            # Clean up
             self.player.trail.clear()
             self.player.is_drawing = False
             
-            # Update perimeter
+            # Update game state
             self._compute_perimeter()
             self._remap_sparx()
-            
-            # Relocate trapped Qix
             self._relocate_qix()
             
         except Exception as e:
             print(f"Trail completion error: {e}")
             self._reset_trail()
     
+    def _find_empty_regions(self, all_empty: List[Tuple[int, int]]) -> List[Set[Tuple[int, int]]]:
+        """
+        Find all disconnected empty regions.
+        
+        Args:
+            all_empty: List of all empty tile coordinates
+            
+        Returns:
+            List of sets, each containing coordinates of one region
+        """
+        regions = []
+        remaining = set(all_empty)
+        
+        while remaining:
+            start_y, start_x = remaining.pop()
+            region = self.grid.flood_fill_fast(start_y, start_x)
+            if region:
+                regions.append(region)
+                remaining -= region
+        
+        return regions
+    
     def _relocate_qix(self):
-        """Simple, crash-proof Qix relocation."""
+        """Relocate Qix that are trapped in filled territory."""
         for qix in self.qix_list:
             if self.grid.tiles[qix.y][qix.x] != TileState.EMPTY:
                 # Find nearest empty tile
-                empty_tiles = [(y, x) for y in range(self.grid.height) for x in range(self.grid.width)
-                              if self.grid.tiles[y][x] == TileState.EMPTY]
+                empty_tiles = [
+                    (y, x) for y in range(self.grid.height) 
+                    for x in range(self.grid.width)
+                    if self.grid.tiles[y][x] == TileState.EMPTY
+                ]
                 
                 if empty_tiles:
-                    nearest = min(empty_tiles, key=lambda p: abs(p[0] - qix.y) + abs(p[1] - qix.x))
+                    nearest = min(empty_tiles, 
+                                 key=lambda p: abs(p[0] - qix.y) + abs(p[1] - qix.x))
                     qix.y, qix.x = nearest
                     qix.vis_x = float(qix.x)
                     qix.vis_y = float(qix.y)
+                    # Randomize velocity
                     qix.vel_x = 1 if random.random() > 0.5 else -1
                     qix.vel_y = 1 if random.random() > 0.5 else -1
     
     def _remap_sparx(self):
-        """Remap Sparx to nearest perimeter position (same system as player)."""
+        """Remap Sparx to nearest valid perimeter position after territory change."""
         if not self.perimeter:
             return
         
         for sparx in self.sparx_list:
             old_pos = sparx.pos
             
-            # If current position is still in perimeter, keep it
+            # Keep position if still valid
             if old_pos in self.perimeter:
-                print(f"Sparx position {old_pos} still valid")
                 continue
             
             # Find nearest perimeter tile
             nearest = min(self.perimeter, 
                          key=lambda p: abs(p[0] - old_pos[0]) + abs(p[1] - old_pos[1]))
-            
             sparx.pos = nearest
-            # Don't reset visual position - let it interpolate smoothly
-            
-            print(f"Remapped Sparx from {old_pos} to {nearest}")
+            # Note: Do NOT reverse direction when remapping after trail completion
     
     def update_qix(self):
+        """
+        Update all Qix positions and check collisions.
+        
+        Qix move randomly through empty territory, bouncing off walls
+        and filled areas. Randomly change direction occasionally.
+        """
         for qix in self.qix_list:
             qix.move_timer += 1
             if qix.move_timer < self.config.QIX_SPEED:
                 continue
             qix.move_timer = 0
             
+            # Randomly change direction
             if random.random() < 0.02:
                 if random.random() < 0.5:
                     qix.vel_y *= -1
                 if random.random() < 0.5:
                     qix.vel_x *= -1
             
+            # Calculate new position
             ny = qix.y + qix.vel_y
             nx = qix.x + qix.vel_x
             
-            if not self.grid.in_bounds(ny, nx) or self.grid.tiles[ny][nx] in (TileState.FILLED, TileState.BORDER):
-                if not self.grid.in_bounds(ny, nx) or self.grid.tiles[ny][nx] == TileState.BORDER:
+            # Bounce off walls or filled territory
+            if (not self.grid.in_bounds(ny, nx) or 
+                self.grid.tiles[ny][nx] in (TileState.FILLED, TileState.BORDER)):
+                
+                if (not self.grid.in_bounds(ny, nx) or 
+                    self.grid.tiles[ny][nx] == TileState.BORDER):
+                    # Hit border - reverse both
                     qix.vel_y *= -1
                     qix.vel_x *= -1
                 else:
-                    if not self.grid.in_bounds(ny, qix.x) or self.grid.tiles[ny][qix.x] in (TileState.FILLED, TileState.BORDER):
+                    # Hit filled - reverse individual components
+                    if (not self.grid.in_bounds(ny, qix.x) or 
+                        self.grid.tiles[ny][qix.x] in (TileState.FILLED, TileState.BORDER)):
                         qix.vel_y *= -1
-                    if not self.grid.in_bounds(qix.y, nx) or self.grid.tiles[qix.y][nx] in (TileState.FILLED, TileState.BORDER):
+                    if (not self.grid.in_bounds(qix.y, nx) or 
+                        self.grid.tiles[qix.y][nx] in (TileState.FILLED, TileState.BORDER)):
                         qix.vel_x *= -1
                 
+                # Recalculate after bounce
                 ny = qix.y + qix.vel_y
                 nx = qix.x + qix.vel_x
             
-            if self.grid.in_bounds(ny, nx) and self.grid.tiles[ny][nx] in (TileState.EMPTY, TileState.TRAIL):
+            # Move if valid
+            if (self.grid.in_bounds(ny, nx) and 
+                self.grid.tiles[ny][nx] in (TileState.EMPTY, TileState.TRAIL)):
                 qix.y, qix.x = ny, nx
             
-            # Check collision only if player is not invincible
-            if self.player.invincible_timer == 0 and (qix.y, qix.x) in self.player.trail:
+            # Check trail collision (only if player not invincible)
+            if (self.player.invincible_timer == 0 and 
+                (qix.y, qix.x) in self.player.trail):
                 self._handle_player_death()
     
     def update_sparx(self):
-        """Update Sparx using the same perimeter movement logic as the player."""
+        """
+        Update all Sparx positions along perimeter.
+        
+        Sparx patrol the perimeter using intelligent pathfinding that
+        prefers their directional bias (clockwise/counter-clockwise).
+        Checks for player collisions.
+        """
         for sparx in self.sparx_list:
+            # Check player collision at CURRENT position first (before any timing checks)
+            # This ensures we catch the player even if they're moving quickly
+            if sparx.cooldown == 0 and self.player.invincible_timer == 0:
+                player_pos = (self.player.y, self.player.x)
+                
+                # Check if player is at current Sparx position
+                if player_pos == sparx.pos:
+                    self.player.lives -= 1
+                    self.player.invincible_timer = 60
+                    sparx.direction *= -1  # Reverse direction on hit
+                    sparx.cooldown = self.config.SPARX_COOLDOWN
+                    sparx.last_pos = None  # Clear to force new direction next move
+                    print(f"Sparx collision at position! Direction reversed to {sparx.direction}. Lives: {self.player.lives}")
+                    # Continue to next sparx - this one stays in place this frame
+                    continue
+            
             sparx.move_timer += 1
             if sparx.move_timer < self.config.SPARX_SPEED:
                 continue
@@ -750,9 +894,14 @@ class QixGame:
             
             old_pos = sparx.pos
             
-            # Find all valid adjacent perimeter tiles
-            valid_moves = []
+            # Check trail start collision (instant death if Sparx reaches trail start)
+            if self.player.is_drawing and old_pos == self.player.trail_start:
+                print("Sparx hit trail start!")
+                self._handle_player_death()
+                return
             
+            # Find all valid adjacent perimeter moves
+            valid_moves = []
             for dy, dx in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
                 ny, nx = old_pos[0] + dy, old_pos[1] + dx
                 new_pos = (ny, nx)
@@ -760,116 +909,172 @@ class QixGame:
                 if new_pos not in self.perimeter:
                     continue
                 
-                # Check gap crossing (same as player)
-                current_tile = self.grid.tiles[old_pos[0]][old_pos[1]]
-                next_tile = self.grid.tiles[ny][nx]
-                
-                can_move = True
-                if current_tile in (TileState.BORDER, TileState.FILLED) and next_tile in (TileState.BORDER, TileState.FILLED):
-                    if dx != 0:  # Horizontal
-                        check_y1 = old_pos[0] - 1
-                        check_y2 = old_pos[0] + 1
-                        has_empty = (
-                            (self.grid.in_bounds(check_y1, old_pos[1]) and self.grid.tiles[check_y1][old_pos[1]] == TileState.EMPTY) or
-                            (self.grid.in_bounds(check_y2, old_pos[1]) and self.grid.tiles[check_y2][old_pos[1]] == TileState.EMPTY) or
-                            (self.grid.in_bounds(check_y1, nx) and self.grid.tiles[check_y1][nx] == TileState.EMPTY) or
-                            (self.grid.in_bounds(check_y2, nx) and self.grid.tiles[check_y2][nx] == TileState.EMPTY)
-                        )
-                        can_move = has_empty
-                    else:  # Vertical
-                        check_x1 = old_pos[1] - 1
-                        check_x2 = old_pos[1] + 1
-                        has_empty = (
-                            (self.grid.in_bounds(old_pos[0], check_x1) and self.grid.tiles[old_pos[0]][check_x1] == TileState.EMPTY) or
-                            (self.grid.in_bounds(old_pos[0], check_x2) and self.grid.tiles[old_pos[0]][check_x2] == TileState.EMPTY) or
-                            (self.grid.in_bounds(ny, check_x1) and self.grid.tiles[ny][check_x1] == TileState.EMPTY) or
-                            (self.grid.in_bounds(ny, check_x2) and self.grid.tiles[ny][check_x2] == TileState.EMPTY)
-                        )
-                        can_move = has_empty
-                
-                if can_move:
+                # Check gap crossing (same as player logic)
+                if self._can_move_between_borders(old_pos, new_pos, dx != 0):
                     valid_moves.append((new_pos, dy, dx))
             
-            # Choose best move based on direction preference and avoiding backtracking
+            # Choose best move based on direction and avoiding backtracking
+            new_pos = None
             if valid_moves:
-                # Calculate where we came from (reverse of last move)
-                last_dy = old_pos[0] - getattr(sparx, 'last_pos', old_pos)[0]
-                last_dx = old_pos[1] - getattr(sparx, 'last_pos', old_pos)[1]
-                
-                # Score each move
-                best_move = None
-                best_score = -999
-                
-                for new_pos, dy, dx in valid_moves:
-                    score = 0
-                    
-                    # Heavily penalize going backwards (opposite of last move)
-                    if dy == -last_dy and dx == -last_dx:
-                        score -= 100
-                    
-                    # Prefer continuing in same direction
-                    if dy == last_dy and dx == last_dx:
-                        score += 50
-                    
-                    # Apply directional preference based on clockwise/counter-clockwise
-                    if sparx.direction == 1:  # Clockwise: prefer right, down, left, up
-                        if dx == 1: score += 40  # right
-                        elif dy == 1: score += 30  # down
-                        elif dx == -1: score += 20  # left
-                        elif dy == -1: score += 10  # up
-                    else:  # Counter-clockwise: prefer left, up, right, down
-                        if dx == -1: score += 40  # left
-                        elif dy == -1: score += 30  # up
-                        elif dx == 1: score += 20  # right
-                        elif dy == 1: score += 10  # down
-                    
-                    if score > best_score:
-                        best_score = score
-                        best_move = new_pos
-                
-                if best_move:
-                    sparx.last_pos = old_pos  # Remember where we came from
-                    sparx.pos = best_move
+                new_pos = self._choose_best_sparx_move(sparx, valid_moves, old_pos)
+                if new_pos:
+                    sparx.last_pos = old_pos
+                    sparx.pos = new_pos
             else:
-                # No valid 4-directional moves, try diagonals
+                # Try diagonal moves if no 4-directional moves available
                 for dy, dx in [(1, 1), (1, -1), (-1, 1), (-1, -1)]:
                     ny, nx = old_pos[0] + dy, old_pos[1] + dx
                     if (ny, nx) in self.perimeter:
                         sparx.last_pos = old_pos
                         sparx.pos = (ny, nx)
+                        new_pos = (ny, nx)
                         break
             
-            # Check player collision (only when not in cooldown)
-            if sparx.cooldown == 0:
+            # If Sparx didn't move, skip collision checks
+            if new_pos is None or new_pos == old_pos:
+                continue
+            
+            # Check player collision AFTER moving (if not in cooldown or invincible)
+            if sparx.cooldown == 0 and self.player.invincible_timer == 0:
                 player_pos = (self.player.y, self.player.x)
                 
-                # Only check collision if player is not invincible
-                if self.player.invincible_timer == 0:
-                    if player_pos == sparx.pos or player_pos == old_pos:
-                        self.player.lives -= 1
-                        self.player.invincible_timer = 60  # Give invincibility frames
-                        print(f"Sparx hit player! Lives: {self.player.lives}")
-                        sparx.direction *= -1  # Reverse Sparx direction
-                        sparx.cooldown = self.config.SPARX_COOLDOWN
-                        continue
-                    
-                    if self._player_crossed_segment(old_pos, sparx.pos, player_pos):
-                        self.player.lives -= 1
-                        self.player.invincible_timer = 60  # Give invincibility frames
-                        print(f"Sparx crossed player! Lives: {self.player.lives}")
-                        sparx.direction *= -1  # Reverse Sparx direction
-                        sparx.cooldown = self.config.SPARX_COOLDOWN
-                        continue
-            
-            # Check trail collision
-            if self.player.is_drawing and sparx.pos == self.player.trail_start:
-                print("Sparx hit trail start!")
-                self._handle_player_death()
-                return
+                # Check if player is at new position
+                if player_pos == sparx.pos:
+                    self.player.lives -= 1
+                    self.player.invincible_timer = 60
+                    sparx.direction *= -1  # Reverse direction on hit
+                    sparx.cooldown = self.config.SPARX_COOLDOWN
+                    # Move sparx back to old position AND clear last_pos to force direction change
+                    sparx.pos = old_pos
+                    sparx.last_pos = None  # Clear last_pos so next move uses new direction
+                    print(f"Sparx hit player at new position! Direction reversed to {sparx.direction}. Lives: {self.player.lives}")
+                    continue
+                
+                # Check if player crossed the path between old and new position
+                if self._player_crossed_segment(old_pos, sparx.pos, player_pos):
+                    self.player.lives -= 1
+                    self.player.invincible_timer = 60
+                    sparx.direction *= -1  # Reverse direction on hit
+                    sparx.cooldown = self.config.SPARX_COOLDOWN
+                    # Move sparx back to old position AND clear last_pos to force direction change
+                    sparx.pos = old_pos
+                    sparx.last_pos = None  # Clear last_pos so next move uses new direction
+                    print(f"Sparx crossed player path! Direction reversed to {sparx.direction}. Lives: {self.player.lives}")
     
-    def _player_crossed_segment(self, old_pos: Tuple[int, int], new_pos: Tuple[int, int], 
+    def _can_move_between_borders(self, pos1: Tuple[int, int], 
+                                   pos2: Tuple[int, int], 
+                                   is_horizontal: bool) -> bool:
+        """
+        Check if movement between two border tiles is valid.
+        
+        Prevents crossing through diagonal gaps in the border.
+        
+        Args:
+            pos1: Starting (y, x) position
+            pos2: Ending (y, x) position
+            is_horizontal: True if horizontal move, False if vertical
+            
+        Returns:
+            True if move is valid (has adjacent empty space)
+        """
+        y1, x1 = pos1
+        y2, x2 = pos2
+        
+        current_tile = self.grid.tiles[y1][x1]
+        next_tile = self.grid.tiles[y2][x2]
+        
+        # If not both border/filled, move is always valid
+        if not (current_tile in (TileState.BORDER, TileState.FILLED) and 
+                next_tile in (TileState.BORDER, TileState.FILLED)):
+            return True
+        
+        return self._has_adjacent_empty(y1, x1, y2, x2, is_horizontal)
+    
+    def _choose_best_sparx_move(self, sparx: Sparx, 
+                                valid_moves: List[Tuple[Tuple[int, int], int, int]], 
+                                old_pos: Tuple[int, int]) -> Tuple[int, int]:
+        """
+        Choose best move for Sparx based on direction preference.
+        
+        Args:
+            sparx: The Sparx entity
+            valid_moves: List of (position, dy, dx) tuples
+            old_pos: Current position
+            
+        Returns:
+            Best new position for Sparx
+        """
+        # Calculate where we came from (using last_pos if available and not None)
+        last_dy = 0
+        last_dx = 0
+        
+        if (hasattr(sparx, 'last_pos') and 
+            sparx.last_pos is not None and 
+            sparx.last_pos != old_pos):
+            last_dy = old_pos[0] - sparx.last_pos[0]
+            last_dx = old_pos[1] - sparx.last_pos[1]
+        
+        best_move = None
+        best_score = -999
+        
+        for new_pos, dy, dx in valid_moves:
+            score = 0
+            
+            # CRITICAL: Heavily penalize backtracking (going opposite to last move)
+            # This is the most important rule - never go backwards
+            if last_dy != 0 or last_dx != 0:
+                if dy == -last_dy and dx == -last_dx:
+                    score -= 1000  # Increased penalty to ensure it's never chosen
+                    continue  # Skip this move entirely
+            
+            # Apply directional preference based on clockwise/counter-clockwise
+            # This now has priority since we skip backwards moves
+            if sparx.direction == 1:  # Clockwise: prefer right > down > left > up
+                if dx == 1 and dy == 0:      # right
+                    score += 100
+                elif dy == 1 and dx == 0:    # down
+                    score += 75
+                elif dx == -1 and dy == 0:   # left
+                    score += 50
+                elif dy == -1 and dx == 0:   # up
+                    score += 25
+            else:  # Counter-clockwise: prefer left > up > right > down
+                if dx == -1 and dy == 0:     # left
+                    score += 100
+                elif dy == -1 and dx == 0:   # up
+                    score += 75
+                elif dx == 1 and dy == 0:    # right
+                    score += 50
+                elif dy == 1 and dx == 0:    # down
+                    score += 25
+            
+            # Small bonus for continuing in same direction (but less than directional preference)
+            # Only apply if we have a valid last movement
+            if (last_dy != 0 or last_dx != 0) and dy == last_dy and dx == last_dx:
+                score += 10
+            
+            if score > best_score:
+                best_score = score
+                best_move = new_pos
+        
+        return best_move
+    
+    def _player_crossed_segment(self, old_pos: Tuple[int, int], 
+                                new_pos: Tuple[int, int], 
                                 player_pos: Tuple[int, int]) -> bool:
-        """Check if player crossed between old and new Sparx positions."""
+        """
+        Check if player position lies on segment between old and new Sparx positions.
+        
+        Used to detect collisions when player and Sparx cross paths.
+        
+        Args:
+            old_pos: Sparx's previous position
+            new_pos: Sparx's current position
+            player_pos: Player's current position
+            
+        Returns:
+            True if player crossed the Sparx's movement path
+        """
         oy, ox = old_pos
         ny, nx = new_pos
         py, px = player_pos
@@ -885,6 +1090,12 @@ class QixGame:
         return False
     
     def check_game_over(self) -> bool:
+        """
+        Check win/loss conditions.
+        
+        Returns:
+            True if game is over (win or loss)
+        """
         if self.player.lives < 1:
             self.game_state = GameState.GAMEOVER
             return True
@@ -896,27 +1107,35 @@ class QixGame:
         return False
     
     def render(self):
-        scale = self.config.WINDOW_SCALE
+        """Render the game world, entities, and HUD."""
         tile_size = self.config.scaled_tile_size
         
         # Background
-        scaled_bg = pygame.transform.scale(self.background_img, 
-                                          (self.config.screen_width, self.config.screen_height))
+        scaled_bg = pygame.transform.scale(
+            self.background_img, 
+            (self.config.screen_width, self.config.screen_height)
+        )
         self.screen.blit(scaled_bg, (0, 0))
         
-        # Grid tiles (optimized)
+        # Grid tiles (filled and border)
         for y in range(self.grid.height):
             for x in range(self.grid.width):
                 if self.grid.tiles[y][x] in (TileState.BORDER, TileState.FILLED):
                     px = x * tile_size
                     py = y * tile_size
+                    
+                    # Tile texture coordinates
                     tx = (x * self.config.TILE_SIZE) % self.land_img.get_width()
                     ty = (y * self.config.TILE_SIZE) % self.land_img.get_height()
                     
-                    source_w = min(self.config.TILE_SIZE, self.land_img.get_width() - tx)
-                    source_h = min(self.config.TILE_SIZE, self.land_img.get_height() - ty)
+                    source_w = min(self.config.TILE_SIZE, 
+                                  self.land_img.get_width() - tx)
+                    source_h = min(self.config.TILE_SIZE, 
+                                  self.land_img.get_height() - ty)
                     
-                    texture = self.land_img.subsurface(pygame.Rect(tx, ty, source_w, source_h))
+                    texture = self.land_img.subsurface(
+                        pygame.Rect(tx, ty, source_w, source_h)
+                    )
                     scaled = pygame.transform.scale(texture, (tile_size, tile_size))
                     self.screen.blit(scaled, (px, py))
         
@@ -930,41 +1149,55 @@ class QixGame:
                 tex_x = (tx * self.config.TILE_SIZE) % self.land_img.get_width()
                 tex_y = (ty * self.config.TILE_SIZE) % self.land_img.get_height()
                 
-                source_w = min(self.config.TILE_SIZE, self.land_img.get_width() - tex_x)
-                source_h = min(self.config.TILE_SIZE, self.land_img.get_height() - tex_y)
+                source_w = min(self.config.TILE_SIZE, 
+                              self.land_img.get_width() - tex_x)
+                source_h = min(self.config.TILE_SIZE, 
+                              self.land_img.get_height() - tex_y)
                 
-                texture = self.land_img.subsurface(pygame.Rect(tex_x, tex_y, source_w, source_h))
+                texture = self.land_img.subsurface(
+                    pygame.Rect(tex_x, tex_y, source_w, source_h)
+                )
                 scaled_tile = pygame.transform.scale(texture, (tile_size, tile_size))
-                self.screen.blit(scaled_tile, (tx * tile_size, hud_y + ty * tile_size))
+                self.screen.blit(scaled_tile, 
+                               (tx * tile_size, hud_y + ty * tile_size))
         
-        # Trail
+        # Trail (yellow line showing player's drawing)
         for y, x in self.player.trail:
-            pygame.draw.rect(self.screen, (255, 200, 0), 
-                           pygame.Rect(x * tile_size, y * tile_size, tile_size, tile_size))
+            pygame.draw.rect(
+                self.screen, 
+                (255, 200, 0), 
+                pygame.Rect(x * tile_size, y * tile_size, tile_size, tile_size)
+            )
         
-        # Perimeter
+        # Perimeter markers (rocks)
         scaled_rock = pygame.transform.scale(self.rock_img, (tile_size, tile_size))
         for y, x in self.perimeter:
             px = x * tile_size + (tile_size - scaled_rock.get_width()) // 2
             py = y * tile_size + (tile_size - scaled_rock.get_height()) // 2
             self.screen.blit(scaled_rock, (px, py))
         
-        # Player
+        # Player (with interpolation for smooth movement)
         self.player.vis_x += (self.player.x - self.player.vis_x) * 0.4
         self.player.vis_y += (self.player.y - self.player.vis_y) * 0.4
         
-        # Flash player if invincible
-        if self.player.invincible_timer > 0 and (self.player.invincible_timer // 5) % 2 == 0:
-            # Skip rendering player (creates flashing effect)
-            pass
-        else:
-            scaled_player = pygame.transform.scale(self.player_img, (tile_size + 6, tile_size + 6))
-            px = self.player.vis_x * tile_size + tile_size // 2 - scaled_player.get_width() // 2
-            py = self.player.vis_y * tile_size + tile_size // 2 - scaled_player.get_height() // 2
+        # Flash player when invincible
+        if not (self.player.invincible_timer > 0 and 
+                (self.player.invincible_timer // 5) % 2 == 0):
+            scaled_player = pygame.transform.scale(
+                self.player_img, 
+                (tile_size + 6, tile_size + 6)
+            )
+            px = (self.player.vis_x * tile_size + tile_size // 2 - 
+                  scaled_player.get_width() // 2)
+            py = (self.player.vis_y * tile_size + tile_size // 2 - 
+                  scaled_player.get_height() // 2)
             self.screen.blit(scaled_player, (int(px), int(py)))
         
-        # Qix
-        scaled_qix = pygame.transform.scale(self.qix_img, (tile_size + 8, tile_size + 8))
+        # Qix enemies
+        scaled_qix = pygame.transform.scale(
+            self.qix_img, 
+            (tile_size + 8, tile_size + 8)
+        )
         for qix in self.qix_list:
             qix.vis_x += (qix.x - qix.vis_x) * 0.3
             qix.vis_y += (qix.y - qix.vis_y) * 0.3
@@ -972,36 +1205,51 @@ class QixGame:
             qy = qix.vis_y * tile_size + tile_size // 2 - scaled_qix.get_height() // 2
             self.screen.blit(scaled_qix, (int(qx), int(qy)))
         
-        # Sparx
-        scaled_sparx = pygame.transform.scale(self.sparx_img, (tile_size + 6, tile_size + 6))
+        # Sparx enemies
+        scaled_sparx = pygame.transform.scale(
+            self.sparx_img, 
+            (tile_size + 6, tile_size + 6)
+        )
         for sparx in self.sparx_list:
             sparx.vis_x += (sparx.pos[1] - sparx.vis_x) * 0.2
             sparx.vis_y += (sparx.pos[0] - sparx.vis_y) * 0.2
-            sx = sparx.vis_x * tile_size + tile_size // 2 - scaled_sparx.get_width() // 2
-            sy = sparx.vis_y * tile_size + tile_size // 2 - scaled_sparx.get_height() // 2
+            sx = (sparx.vis_x * tile_size + tile_size // 2 - 
+                  scaled_sparx.get_width() // 2)
+            sy = (sparx.vis_y * tile_size + tile_size // 2 - 
+                  scaled_sparx.get_height() // 2)
             self.screen.blit(scaled_sparx, (int(sx), int(sy)))
         
         # HUD text
         fill_pct = int(self.grid.calculate_fill_percentage() * 100)
-        hud_text = self.font.render(f"Lifeforce: {self.player.lives} Filled: {fill_pct}%", True, (0, 0, 0))
-        self.screen.blit(hud_text, (int(5 * scale), int(hud_y + 2 * scale)))
+        hud_text = self.font.render(
+            f"Lifeforce: {self.player.lives}  Filled: {fill_pct}%", 
+            True, 
+            (0, 0, 0)
+        )
+        self.screen.blit(hud_text, (5, hud_y + 2))
         
         pygame.display.flip()
     
     def render_menu(self):
+        """Render the main menu screen."""
         self.screen.fill((20, 20, 60))
         scale = self.config.WINDOW_SCALE
         center_x = self.config.screen_width // 2
         center_y = self.config.screen_height // 2
         
+        # Title
         title = self.title_font.render("THE QIX GAME", True, (255, 255, 100))
         self.screen.blit(title, title.get_rect(center=(center_x, center_y - int(180 * scale))))
         
+        # Difficulty selection
         y_offset = center_y - int(100 * scale)
         select = self.menu_font.render("SELECT DIFFICULTY:", True, (255, 255, 100))
         self.screen.blit(select, select.get_rect(center=(center_x, y_offset)))
         
-        difficulties = [("NORMAL (2 Sparx, 1 Qix)", 0), ("HARD (3 Sparx, 2 Qix)", 1)]
+        difficulties = [
+            ("NORMAL (2 Sparx, 1 Qix)", 0), 
+            ("HARD (3 Sparx, 2 Qix)", 1)
+        ]
         y_offset += int(45 * scale)
         
         for text, index in difficulties:
@@ -1011,6 +1259,7 @@ class QixGame:
             self.screen.blit(option, option.get_rect(center=(center_x, y_offset)))
             y_offset += int(40 * scale)
         
+        # Instructions
         y_offset = center_y + int(50 * scale)
         instructions = [
             "HOW TO PLAY:",
@@ -1029,6 +1278,7 @@ class QixGame:
         pygame.display.flip()
     
     def render_game_over(self):
+        """Render the game over screen."""
         self.screen.fill((60, 20, 20))
         scale = self.config.WINDOW_SCALE
         center_x = self.config.screen_width // 2
@@ -1037,15 +1287,24 @@ class QixGame:
         self.screen.blit(title, title.get_rect(center=(center_x, int(150 * scale))))
         
         fill_pct = int(self.grid.calculate_fill_percentage() * 100)
-        stats = self.menu_font.render(f"Area Captured: {fill_pct}%", True, (255, 255, 255))
+        stats = self.menu_font.render(
+            f"Area Captured: {fill_pct}%", 
+            True, 
+            (255, 255, 255)
+        )
         self.screen.blit(stats, stats.get_rect(center=(center_x, int(250 * scale))))
         
-        cont = self.menu_font.render("Press ENTER to Continue", True, (200, 200, 200))
+        cont = self.menu_font.render(
+            "Press ENTER to Continue", 
+            True, 
+            (200, 200, 200)
+        )
         self.screen.blit(cont, cont.get_rect(center=(center_x, int(350 * scale))))
         
         pygame.display.flip()
     
     def render_win(self):
+        """Render the victory screen."""
         self.screen.fill((20, 60, 20))
         scale = self.config.WINDOW_SCALE
         center_x = self.config.screen_width // 2
@@ -1054,22 +1313,44 @@ class QixGame:
         self.screen.blit(title, title.get_rect(center=(center_x, int(150 * scale))))
         
         diff_names = {Difficulty.NORMAL: "NORMAL", Difficulty.HARD: "HARD"}
-        diff = self.menu_font.render(f"Difficulty: {diff_names[self.selected_difficulty]}", True, (255, 255, 255))
+        diff = self.menu_font.render(
+            f"Difficulty: {diff_names[self.selected_difficulty]}", 
+            True, 
+            (255, 255, 255)
+        )
         self.screen.blit(diff, diff.get_rect(center=(center_x, int(230 * scale))))
         
-        lives = self.menu_font.render(f"Lives Remaining: {self.player.lives}", True, (255, 255, 255))
+        lives = self.menu_font.render(
+            f"Lives Remaining: {self.player.lives}", 
+            True, 
+            (255, 255, 255)
+        )
         self.screen.blit(lives, lives.get_rect(center=(center_x, int(280 * scale))))
         
         fill_pct = int(self.grid.calculate_fill_percentage() * 100)
-        stats = self.menu_font.render(f"Area Captured: {fill_pct}%", True, (255, 255, 255))
+        stats = self.menu_font.render(
+            f"Area Captured: {fill_pct}%", 
+            True, 
+            (255, 255, 255)
+        )
         self.screen.blit(stats, stats.get_rect(center=(center_x, int(330 * scale))))
         
-        cont = self.menu_font.render("Press ENTER to Continue", True, (200, 200, 200))
+        cont = self.menu_font.render(
+            "Press ENTER to Continue", 
+            True, 
+            (200, 200, 200)
+        )
         self.screen.blit(cont, cont.get_rect(center=(center_x, int(410 * scale))))
         
         pygame.display.flip()
     
     def run(self):
+        """
+        Main game loop.
+        
+        Processes input, updates game state, and renders based on
+        current game state (menu, playing, game over, win).
+        """
         while self.running:
             self.clock.tick(self.config.FPS)
             
