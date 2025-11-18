@@ -1162,7 +1162,7 @@ class QixGame:
                                (tx * tile_size, hud_y + ty * tile_size))
         
         # Trail (yellow line showing player's drawing)
-        for y, x in self.player.trail:
+        for y, x in self.player.trail[:-1]:
             pygame.draw.rect(
                 self.screen, 
                 (255, 200, 0), 
