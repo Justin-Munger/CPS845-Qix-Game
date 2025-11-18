@@ -474,24 +474,50 @@ def remap_sparx_indices():
         sparx["idx"] = best_i
         sparx["pos"] = ordered_perimeter[best_i]
 
+def trail_has_square():
+    """
+    Returns True if the current trail_cells contains a 2x2 square 
+    (4 tiles adjacent in a block).
+    """
+    # convert trail_cells to a set for fast lookup
+    trail_set = set(trail_cells)
+    
+    for y, x in trail_cells:
+        # check the 2x2 square starting at (y,x)
+        if ((y, x) in trail_set and
+            (y+1, x) in trail_set and
+            (y, x+1) in trail_set and
+            (y+1, x+1) in trail_set):
+            return True
+    return False
+
 def commit_trail_and_fill():
     global player_perimeter
     if not trail_cells:
         return
 
     # If trail is just a single tile, check adjacent perimeter tiles
-    if len(trail_cells) == 1:
-        print("Single-tile")
-        y, x = trail_cells[0]
+    if len(trail_cells) == 1 or len(trail_cells) == 2:
+        
+        #y, x = trail_cells[0]
         # Count adjacent tiles that are in the current perimeter
         adjacent_count = 0
-        for dy, dx in ((0,1),(0,-1),(1,0),(-1,0)):
-            ny, nx = y + dy, x + dx
-            if (ny, nx) in player_perimeter:
-                adjacent_count += 1
-        if adjacent_count < 2:
+        for y, x in trail_cells:
+            for dy, dx in ((0,1),(0,-1),(1,0),(-1,0)):
+                ny, nx = y + dy, x + dx
+                if (ny, nx) in player_perimeter:
+                    adjacent_count += 1
+        if adjacent_count < 2 and len(trail_cells) == 1:
             # Single tile not connected enough then ignore
+            print("Single-tile not connected enough, ignoring trail")
             grid[y][x] = EMPTY
+            trail_cells.clear()
+            return
+        if adjacent_count == 2 and len(trail_cells) == 2:
+            # Single tile not connected enough then ignore
+            print("Two-tile trail not connected enough, ignoring trail")
+            for y, x in trail_cells:
+                grid[y][x] = EMPTY
             trail_cells.clear()
             return
     
@@ -624,6 +650,14 @@ while running:
                 reset_trail()
                 drawing = False
                 player_y, player_x = trail_start_pos
+            
+            if drawing and trail_has_square() == True:
+                print("Crossed own trail")
+                lifeforce -= 1
+                reset_trail()
+                drawing = False
+                player_y, player_x = trail_start_pos
+            
             else:
                 player_x, player_y = nx, ny
                 # add trail if we're in empty playfield
