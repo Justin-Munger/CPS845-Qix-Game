@@ -1,8 +1,12 @@
+"""
+Optimized Qix-like Game - High performance version
+"""
+
 import pygame
 import random
 from collections import deque
 from dataclasses import dataclass
-from typing import List, Set, Tuple
+from typing import List, Set, Tuple, Optional
 from enum import IntEnum
 
 
@@ -178,7 +182,7 @@ class Qix:
 
 
 class Sparx:
-    __slots__ = ['pos', 'direction', 'index', 'vis_x', 'vis_y', 'cooldown', 'move_timer']
+    __slots__ = ['pos', 'direction', 'index', 'vis_x', 'vis_y', 'cooldown', 'move_timer', 'last_pos']
     
     def __init__(self, pos: Tuple[int, int], direction: int, index: int):
         self.pos = pos
@@ -188,6 +192,7 @@ class Sparx:
         self.vis_y = float(pos[0])
         self.cooldown = 10
         self.move_timer = 0
+        self.last_pos = pos
 
 
 # ============================================================================
@@ -265,8 +270,10 @@ class QixGame:
             self.qix_list.append(Qix(self.config.GRID_HEIGHT // 3, self.config.GRID_WIDTH // 3))
             self.qix_list.append(Qix(self.config.GRID_HEIGHT * 2 // 3, self.config.GRID_WIDTH * 2 // 3))
         
-        # Initialize Sparx
+        # Compute perimeter (used by both player and Sparx)
         self._compute_perimeter()
+        
+        # Initialize Sparx (no longer needs ordered_perimeter)
         self.sparx_list = []
         self._initialize_sparx(difficulty)
         
@@ -296,67 +303,120 @@ class QixGame:
             self.ordered_perimeter = []
     
     def _build_ordered_perimeter(self) -> List[Tuple[int, int]]:
-        """Build contiguous ordered perimeter by walking around it."""
+        """Build a smooth contiguous path that visits every perimeter tile exactly once."""
         if not self.perimeter:
             return []
         
         # Start from top-left corner
         start = min(self.perimeter, key=lambda p: (p[0], p[1]))
         
-        ordered = [start]
-        visited = {start}
-        current = start
+        # Use depth-first search to build a complete path
+        ordered = []
+        visited = set()
         
-        # Prioritized directions for clockwise traversal
-        directions = [(0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
-        
-        max_iterations = len(self.perimeter) * 2
-        
-        for _ in range(max_iterations):
-            found_next = False
+        def dfs_build_path(pos):
+            """Recursively build path visiting all adjacent tiles."""
+            if pos in visited:
+                return
             
-            # Try each direction to find next perimeter tile
-            for dy, dx in directions:
-                ny, nx = current[0] + dy, current[1] + dx
-                
+            visited.add(pos)
+            ordered.append(pos)
+            
+            # Get all adjacent perimeter tiles (4-directional first, then diagonals)
+            neighbors = []
+            
+            # Priority order: right, down, left, up (clockwise from right)
+            for dy, dx in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+                ny, nx = pos[0] + dy, pos[1] + dx
                 if (ny, nx) in self.perimeter and (ny, nx) not in visited:
-                    current = (ny, nx)
-                    ordered.append(current)
-                    visited.add(current)
-                    found_next = True
-                    break
+                    neighbors.append(((ny, nx), 0))  # 4-directional has priority 0
             
-            # If we've visited all perimeter tiles, stop
-            if not found_next or len(visited) >= len(self.perimeter):
-                break
+            # Add diagonal neighbors with lower priority
+            for dy, dx in [(1, 1), (1, -1), (-1, 1), (-1, -1)]:
+                ny, nx = pos[0] + dy, pos[1] + dx
+                if (ny, nx) in self.perimeter and (ny, nx) not in visited:
+                    neighbors.append(((ny, nx), 1))  # diagonals have priority 1
+            
+            # Sort by priority (4-directional first)
+            neighbors.sort(key=lambda x: x[1])
+            
+            # Visit all neighbors
+            for neighbor, _ in neighbors:
+                dfs_build_path(neighbor)
         
-        # Ensure we got all perimeter tiles
-        # If some were missed, add them at the end
-        missing = self.perimeter - visited
-        for tile in missing:
-            ordered.append(tile)
+        # Start DFS from starting position
+        dfs_build_path(start)
         
+        # Handle any disconnected tiles
+        unvisited = self.perimeter - visited
+        while unvisited:
+            # Find closest unvisited to last visited
+            if ordered:
+                next_start = min(unvisited, 
+                               key=lambda p: abs(p[0] - ordered[-1][0]) + abs(p[1] - ordered[-1][1]))
+            else:
+                next_start = min(unvisited, key=lambda p: (p[0], p[1]))
+            
+            print(f"Connecting disconnected segment starting at {next_start}")
+            dfs_build_path(next_start)
+            unvisited = self.perimeter - visited
+        
+        print(f"Built perimeter: {len(ordered)} tiles (expected {len(self.perimeter)})")
         return ordered
     
+    def _is_valid_perimeter_move(self, from_pos: Tuple[int, int], to_pos: Tuple[int, int]) -> bool:
+        """Check if moving between two perimeter tiles is valid (no gap jumping)."""
+        fy, fx = from_pos
+        ty, tx = to_pos
+        
+        # Calculate distance
+        dy = abs(ty - fy)
+        dx = abs(tx - fx)
+        
+        # Direct neighbors (4-directional) are always valid
+        if dy + dx == 1:
+            return True
+        
+        # Diagonal moves (distance = 2 in Manhattan)
+        if dy == 1 and dx == 1:
+            # Check if the two intermediate tiles provide a valid path
+            # For diagonal A to B, check if path A->C->B or A->D->B exists
+            adj1 = (fy, tx)  # same row as from, same col as to
+            adj2 = (ty, fx)  # same row as to, same col as from
+            
+            adj1_is_perimeter = adj1 in self.perimeter
+            adj2_is_perimeter = adj2 in self.perimeter
+            
+            # At least one path should exist through perimeter tiles
+            return adj1_is_perimeter or adj2_is_perimeter
+        
+        # Larger jumps are not valid
+        return False
+    
     def _initialize_sparx(self, difficulty: Difficulty):
-        if not self.ordered_perimeter:
+        """Initialize Sparx using perimeter positions (same as player)."""
+        if not self.perimeter:
             return
         
+        # Find position opposite to player
         target_y = 0 if self.player.y > self.config.GRID_HEIGHT // 2 else self.config.GRID_HEIGHT - 1
         target_x = self.config.GRID_WIDTH - 1 - self.player.x
         
-        best_idx = min(range(len(self.ordered_perimeter)),
-                      key=lambda i: abs(self.ordered_perimeter[i][0] - target_y) + 
-                                   abs(self.ordered_perimeter[i][1] - target_x))
-        start_pos = self.ordered_perimeter[best_idx]
+        # Find nearest perimeter tile to target
+        start_pos = min(self.perimeter, 
+                       key=lambda p: abs(p[0] - target_y) + abs(p[1] - target_x))
         
-        self.sparx_list.append(Sparx(start_pos, 1, best_idx))
-        self.sparx_list.append(Sparx(start_pos, -1, best_idx))
+        # Create Sparx with direction indicators (not index-based)
+        self.sparx_list.append(Sparx(start_pos, 1, 0))  # Clockwise
+        self.sparx_list.append(Sparx(start_pos, -1, 0))  # Counter-clockwise
         
         if difficulty == Difficulty.HARD:
-            third_idx = (best_idx + len(self.ordered_perimeter) // 2) % len(self.ordered_perimeter)
-            third_pos = self.ordered_perimeter[third_idx]
-            self.sparx_list.append(Sparx(third_pos, 1, third_idx))
+            # Third sparx at opposite side
+            opposite_y = self.config.GRID_HEIGHT - 1 - target_y
+            opposite_x = self.config.GRID_WIDTH - 1 - target_x
+            third_pos = min(self.perimeter,
+                           key=lambda p: abs(p[0] - opposite_y) + abs(p[1] - opposite_x))
+            self.sparx_list.append(Sparx(third_pos, 1, 0))
     
     def handle_input(self):
         for event in pygame.event.get():
@@ -423,19 +483,51 @@ class QixGame:
         nx = self.player.x + dx
         ny = self.player.y + dy
         
-        can_move = (
-            self.grid.in_bounds(ny, nx) and (
-                (ny, nx) in self.perimeter or
-                (trail_key and self.grid.tiles[ny][nx] == TileState.EMPTY) or
-                self.grid.tiles[ny][nx] == TileState.TRAIL
-            )
-        )
-        
-        if not can_move:
+        if not self.grid.in_bounds(ny, nx):
             return
         
         current_tile = self.grid.tiles[self.player.y][self.player.x]
         next_tile = self.grid.tiles[ny][nx]
+        
+        # CRITICAL FIX: Prevent moving between two border/filled tiles (crossing through gaps)
+        # Check if current tile is border/filled AND next tile is border/filled
+        if current_tile in (TileState.BORDER, TileState.FILLED) and next_tile in (TileState.BORDER, TileState.FILLED):
+            # Check if there's an empty tile adjacent to the path - if not, this is a gap crossing
+            # Look perpendicular to movement direction
+            if dx != 0:  # Horizontal movement
+                # Check tiles above and below the path
+                check_y1 = self.player.y - 1
+                check_y2 = self.player.y + 1
+                has_empty_adjacent = (
+                    (self.grid.in_bounds(check_y1, self.player.x) and self.grid.tiles[check_y1][self.player.x] == TileState.EMPTY) or
+                    (self.grid.in_bounds(check_y2, self.player.x) and self.grid.tiles[check_y2][self.player.x] == TileState.EMPTY) or
+                    (self.grid.in_bounds(check_y1, nx) and self.grid.tiles[check_y1][nx] == TileState.EMPTY) or
+                    (self.grid.in_bounds(check_y2, nx) and self.grid.tiles[check_y2][nx] == TileState.EMPTY)
+                )
+            else:  # Vertical movement (dy != 0)
+                # Check tiles left and right of the path
+                check_x1 = self.player.x - 1
+                check_x2 = self.player.x + 1
+                has_empty_adjacent = (
+                    (self.grid.in_bounds(self.player.y, check_x1) and self.grid.tiles[self.player.y][check_x1] == TileState.EMPTY) or
+                    (self.grid.in_bounds(self.player.y, check_x2) and self.grid.tiles[self.player.y][check_x2] == TileState.EMPTY) or
+                    (self.grid.in_bounds(ny, check_x1) and self.grid.tiles[ny][check_x1] == TileState.EMPTY) or
+                    (self.grid.in_bounds(ny, check_x2) and self.grid.tiles[ny][check_x2] == TileState.EMPTY)
+                )
+            
+            # If no empty tiles adjacent, this is crossing through a gap - block it
+            if not has_empty_adjacent:
+                return
+        
+        # Normal movement validation
+        can_move = (
+            (ny, nx) in self.perimeter or
+            (trail_key and next_tile == TileState.EMPTY) or
+            next_tile == TileState.TRAIL
+        )
+        
+        if not can_move:
+            return
         
         # Start trail
         if not self.player.is_drawing and next_tile == TileState.EMPTY:
@@ -570,16 +662,26 @@ class QixGame:
                     qix.vel_y = 1 if random.random() > 0.5 else -1
     
     def _remap_sparx(self):
-        if not self.ordered_perimeter:
+        """Remap Sparx to nearest perimeter position (same system as player)."""
+        if not self.perimeter:
             return
         
         for sparx in self.sparx_list:
-            sy, sx = sparx.pos
-            best_idx = min(range(len(self.ordered_perimeter)),
-                          key=lambda i: abs(self.ordered_perimeter[i][0] - sy) + 
-                                       abs(self.ordered_perimeter[i][1] - sx))
-            sparx.index = best_idx
-            sparx.pos = self.ordered_perimeter[best_idx]
+            old_pos = sparx.pos
+            
+            # If current position is still in perimeter, keep it
+            if old_pos in self.perimeter:
+                print(f"Sparx position {old_pos} still valid")
+                continue
+            
+            # Find nearest perimeter tile
+            nearest = min(self.perimeter, 
+                         key=lambda p: abs(p[0] - old_pos[0]) + abs(p[1] - old_pos[1]))
+            
+            sparx.pos = nearest
+            # Don't reset visual position - let it interpolate smoothly
+            
+            print(f"Remapped Sparx from {old_pos} to {nearest}")
     
     def update_qix(self):
         for qix in self.qix_list:
@@ -617,13 +719,14 @@ class QixGame:
                 self._handle_player_death()
     
     def update_sparx(self):
+        """Update Sparx using the same perimeter movement logic as the player."""
         for sparx in self.sparx_list:
             sparx.move_timer += 1
             if sparx.move_timer < self.config.SPARX_SPEED:
                 continue
             sparx.move_timer = 0
             
-            if not self.ordered_perimeter or len(self.ordered_perimeter) < 2:
+            if not self.perimeter:
                 continue
             
             if sparx.cooldown > 0:
@@ -631,33 +734,115 @@ class QixGame:
             
             old_pos = sparx.pos
             
-            # Move to next position in ordered perimeter
-            sparx.index = (sparx.index + sparx.direction) % len(self.ordered_perimeter)
-            new_pos = self.ordered_perimeter[sparx.index]
-            sparx.pos = new_pos
+            # Find all valid adjacent perimeter tiles
+            valid_moves = []
+            
+            for dy, dx in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+                ny, nx = old_pos[0] + dy, old_pos[1] + dx
+                new_pos = (ny, nx)
+                
+                if new_pos not in self.perimeter:
+                    continue
+                
+                # Check gap crossing (same as player)
+                current_tile = self.grid.tiles[old_pos[0]][old_pos[1]]
+                next_tile = self.grid.tiles[ny][nx]
+                
+                can_move = True
+                if current_tile in (TileState.BORDER, TileState.FILLED) and next_tile in (TileState.BORDER, TileState.FILLED):
+                    if dx != 0:  # Horizontal
+                        check_y1 = old_pos[0] - 1
+                        check_y2 = old_pos[0] + 1
+                        has_empty = (
+                            (self.grid.in_bounds(check_y1, old_pos[1]) and self.grid.tiles[check_y1][old_pos[1]] == TileState.EMPTY) or
+                            (self.grid.in_bounds(check_y2, old_pos[1]) and self.grid.tiles[check_y2][old_pos[1]] == TileState.EMPTY) or
+                            (self.grid.in_bounds(check_y1, nx) and self.grid.tiles[check_y1][nx] == TileState.EMPTY) or
+                            (self.grid.in_bounds(check_y2, nx) and self.grid.tiles[check_y2][nx] == TileState.EMPTY)
+                        )
+                        can_move = has_empty
+                    else:  # Vertical
+                        check_x1 = old_pos[1] - 1
+                        check_x2 = old_pos[1] + 1
+                        has_empty = (
+                            (self.grid.in_bounds(old_pos[0], check_x1) and self.grid.tiles[old_pos[0]][check_x1] == TileState.EMPTY) or
+                            (self.grid.in_bounds(old_pos[0], check_x2) and self.grid.tiles[old_pos[0]][check_x2] == TileState.EMPTY) or
+                            (self.grid.in_bounds(ny, check_x1) and self.grid.tiles[ny][check_x1] == TileState.EMPTY) or
+                            (self.grid.in_bounds(ny, check_x2) and self.grid.tiles[ny][check_x2] == TileState.EMPTY)
+                        )
+                        can_move = has_empty
+                
+                if can_move:
+                    valid_moves.append((new_pos, dy, dx))
+            
+            # Choose best move based on direction preference and avoiding backtracking
+            if valid_moves:
+                # Calculate where we came from (reverse of last move)
+                last_dy = old_pos[0] - getattr(sparx, 'last_pos', old_pos)[0]
+                last_dx = old_pos[1] - getattr(sparx, 'last_pos', old_pos)[1]
+                
+                # Score each move
+                best_move = None
+                best_score = -999
+                
+                for new_pos, dy, dx in valid_moves:
+                    score = 0
+                    
+                    # Heavily penalize going backwards (opposite of last move)
+                    if dy == -last_dy and dx == -last_dx:
+                        score -= 100
+                    
+                    # Prefer continuing in same direction
+                    if dy == last_dy and dx == last_dx:
+                        score += 50
+                    
+                    # Apply directional preference based on clockwise/counter-clockwise
+                    if sparx.direction == 1:  # Clockwise: prefer right, down, left, up
+                        if dx == 1: score += 40  # right
+                        elif dy == 1: score += 30  # down
+                        elif dx == -1: score += 20  # left
+                        elif dy == -1: score += 10  # up
+                    else:  # Counter-clockwise: prefer left, up, right, down
+                        if dx == -1: score += 40  # left
+                        elif dy == -1: score += 30  # up
+                        elif dx == 1: score += 20  # right
+                        elif dy == 1: score += 10  # down
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_move = new_pos
+                
+                if best_move:
+                    sparx.last_pos = old_pos  # Remember where we came from
+                    sparx.pos = best_move
+            else:
+                # No valid 4-directional moves, try diagonals
+                for dy, dx in [(1, 1), (1, -1), (-1, 1), (-1, -1)]:
+                    ny, nx = old_pos[0] + dy, old_pos[1] + dx
+                    if (ny, nx) in self.perimeter:
+                        sparx.last_pos = old_pos
+                        sparx.pos = (ny, nx)
+                        break
             
             # Check player collision (only when not in cooldown)
             if sparx.cooldown == 0:
                 player_pos = (self.player.y, self.player.x)
                 
-                # Direct collision
-                if player_pos == new_pos or player_pos == old_pos:
+                if player_pos == sparx.pos or player_pos == old_pos:
                     self.player.lives -= 1
                     print(f"Sparx hit player! Lives: {self.player.lives}")
                     sparx.direction *= -1
                     sparx.cooldown = self.config.SPARX_COOLDOWN
                     continue
                 
-                # Check if player crossed the path
-                if self._player_crossed_segment(old_pos, new_pos, player_pos):
+                if self._player_crossed_segment(old_pos, sparx.pos, player_pos):
                     self.player.lives -= 1
                     print(f"Sparx crossed player! Lives: {self.player.lives}")
                     sparx.direction *= -1
                     sparx.cooldown = self.config.SPARX_COOLDOWN
                     continue
             
-            # Check trail collision (instant, no cooldown)
-            if self.player.is_drawing and new_pos == self.player.trail_start:
+            # Check trail collision
+            if self.player.is_drawing and sparx.pos == self.player.trail_start:
                 print("Sparx hit trail start!")
                 self._handle_player_death()
                 return
