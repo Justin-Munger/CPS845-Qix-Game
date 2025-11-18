@@ -153,7 +153,8 @@ class Grid:
 
 class Player:
     __slots__ = ['x', 'y', 'vis_x', 'vis_y', 'lives', 'is_drawing', 'trail', 
-                 'trail_start', 'last_key', 'move_timer']
+                 'trail_start', 'last_key', 'move_timer', 'invincible_timer', 
+                 'last_move_dx', 'last_move_dy']
     
     def __init__(self, x: int, y: int, lives: int = 9):
         self.x = x
@@ -166,6 +167,9 @@ class Player:
         self.trail_start = None
         self.last_key = None
         self.move_timer = 0
+        self.invincible_timer = 0  # Invincibility frames after hit
+        self.last_move_dx = 0  # Track last movement direction
+        self.last_move_dy = 0
 
 
 class Qix:
@@ -192,7 +196,7 @@ class Sparx:
         self.vis_y = float(pos[0])
         self.cooldown = 10
         self.move_timer = 0
-        self.last_pos = pos
+        self.last_pos = pos  # Track previous position
 
 
 # ============================================================================
@@ -472,6 +476,10 @@ class QixGame:
         return dx, dy, keys[pygame.K_SPACE]
     
     def update_player(self, dx: int, dy: int, trail_key: bool):
+        # Update invincibility timer
+        if self.player.invincible_timer > 0:
+            self.player.invincible_timer -= 1
+        
         self.player.move_timer += 1
         if self.player.move_timer < self.config.PLAYER_SPEED:
             return
@@ -479,6 +487,16 @@ class QixGame:
         
         if dx == 0 and dy == 0:
             return
+        
+        # Prevent moving backwards into own trail
+        if self.player.is_drawing and len(self.player.trail) > 0:
+            # Check if trying to move opposite to last move
+            if (dx == -self.player.last_move_dx and dy == -self.player.last_move_dy):
+                # Check if moving backwards would hit the trail
+                back_x = self.player.x - self.player.last_move_dx
+                back_y = self.player.y - self.player.last_move_dy
+                if (back_y, back_x) in self.player.trail:
+                    return  # Block backwards movement into trail
         
         nx = self.player.x + dx
         ny = self.player.y + dy
@@ -490,12 +508,8 @@ class QixGame:
         next_tile = self.grid.tiles[ny][nx]
         
         # CRITICAL FIX: Prevent moving between two border/filled tiles (crossing through gaps)
-        # Check if current tile is border/filled AND next tile is border/filled
         if current_tile in (TileState.BORDER, TileState.FILLED) and next_tile in (TileState.BORDER, TileState.FILLED):
-            # Check if there's an empty tile adjacent to the path - if not, this is a gap crossing
-            # Look perpendicular to movement direction
             if dx != 0:  # Horizontal movement
-                # Check tiles above and below the path
                 check_y1 = self.player.y - 1
                 check_y2 = self.player.y + 1
                 has_empty_adjacent = (
@@ -504,8 +518,7 @@ class QixGame:
                     (self.grid.in_bounds(check_y1, nx) and self.grid.tiles[check_y1][nx] == TileState.EMPTY) or
                     (self.grid.in_bounds(check_y2, nx) and self.grid.tiles[check_y2][nx] == TileState.EMPTY)
                 )
-            else:  # Vertical movement (dy != 0)
-                # Check tiles left and right of the path
+            else:  # Vertical movement
                 check_x1 = self.player.x - 1
                 check_x2 = self.player.x + 1
                 has_empty_adjacent = (
@@ -515,7 +528,6 @@ class QixGame:
                     (self.grid.in_bounds(ny, check_x2) and self.grid.tiles[ny][check_x2] == TileState.EMPTY)
                 )
             
-            # If no empty tiles adjacent, this is crossing through a gap - block it
             if not has_empty_adjacent:
                 return
         
@@ -536,8 +548,8 @@ class QixGame:
                 self.player.is_drawing = True
                 self.player.trail = []
         
-        # Check Qix collision while drawing
-        if self.player.is_drawing:
+        # Check Qix collision while drawing (only if not invincible)
+        if self.player.is_drawing and self.player.invincible_timer == 0:
             for qix in self.qix_list:
                 if (ny, nx) == (qix.y, qix.x):
                     self._handle_player_death()
@@ -545,6 +557,8 @@ class QixGame:
         
         # Move player
         self.player.x, self.player.y = nx, ny
+        self.player.last_move_dx = dx
+        self.player.last_move_dy = dy
         
         # Handle trail
         if self.player.is_drawing:
@@ -562,6 +576,7 @@ class QixGame:
     
     def _handle_player_death(self):
         self.player.lives -= 1
+        self.player.invincible_timer = 60  # 1 second of invincibility at 60 FPS
         self._reset_trail()
         if self.player.trail_start:
             self.player.y, self.player.x = self.player.trail_start
@@ -715,7 +730,8 @@ class QixGame:
             if self.grid.in_bounds(ny, nx) and self.grid.tiles[ny][nx] in (TileState.EMPTY, TileState.TRAIL):
                 qix.y, qix.x = ny, nx
             
-            if (qix.y, qix.x) in self.player.trail:
+            # Check collision only if player is not invincible
+            if self.player.invincible_timer == 0 and (qix.y, qix.x) in self.player.trail:
                 self._handle_player_death()
     
     def update_sparx(self):
@@ -827,19 +843,23 @@ class QixGame:
             if sparx.cooldown == 0:
                 player_pos = (self.player.y, self.player.x)
                 
-                if player_pos == sparx.pos or player_pos == old_pos:
-                    self.player.lives -= 1
-                    print(f"Sparx hit player! Lives: {self.player.lives}")
-                    sparx.direction *= -1
-                    sparx.cooldown = self.config.SPARX_COOLDOWN
-                    continue
-                
-                if self._player_crossed_segment(old_pos, sparx.pos, player_pos):
-                    self.player.lives -= 1
-                    print(f"Sparx crossed player! Lives: {self.player.lives}")
-                    sparx.direction *= -1
-                    sparx.cooldown = self.config.SPARX_COOLDOWN
-                    continue
+                # Only check collision if player is not invincible
+                if self.player.invincible_timer == 0:
+                    if player_pos == sparx.pos or player_pos == old_pos:
+                        self.player.lives -= 1
+                        self.player.invincible_timer = 60  # Give invincibility frames
+                        print(f"Sparx hit player! Lives: {self.player.lives}")
+                        sparx.direction *= -1  # Reverse Sparx direction
+                        sparx.cooldown = self.config.SPARX_COOLDOWN
+                        continue
+                    
+                    if self._player_crossed_segment(old_pos, sparx.pos, player_pos):
+                        self.player.lives -= 1
+                        self.player.invincible_timer = 60  # Give invincibility frames
+                        print(f"Sparx crossed player! Lives: {self.player.lives}")
+                        sparx.direction *= -1  # Reverse Sparx direction
+                        sparx.cooldown = self.config.SPARX_COOLDOWN
+                        continue
             
             # Check trail collision
             if self.player.is_drawing and sparx.pos == self.player.trail_start:
@@ -932,10 +952,16 @@ class QixGame:
         # Player
         self.player.vis_x += (self.player.x - self.player.vis_x) * 0.4
         self.player.vis_y += (self.player.y - self.player.vis_y) * 0.4
-        scaled_player = pygame.transform.scale(self.player_img, (tile_size + 6, tile_size + 6))
-        px = self.player.vis_x * tile_size + tile_size // 2 - scaled_player.get_width() // 2
-        py = self.player.vis_y * tile_size + tile_size // 2 - scaled_player.get_height() // 2
-        self.screen.blit(scaled_player, (int(px), int(py)))
+        
+        # Flash player if invincible
+        if self.player.invincible_timer > 0 and (self.player.invincible_timer // 5) % 2 == 0:
+            # Skip rendering player (creates flashing effect)
+            pass
+        else:
+            scaled_player = pygame.transform.scale(self.player_img, (tile_size + 6, tile_size + 6))
+            px = self.player.vis_x * tile_size + tile_size // 2 - scaled_player.get_width() // 2
+            py = self.player.vis_y * tile_size + tile_size // 2 - scaled_player.get_height() // 2
+            self.screen.blit(scaled_player, (int(px), int(py)))
         
         # Qix
         scaled_qix = pygame.transform.scale(self.qix_img, (tile_size + 8, tile_size + 8))
