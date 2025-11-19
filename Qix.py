@@ -63,7 +63,7 @@ class GameConfig:
     PLAYER_SPEED: int = 3
     QIX_SPEED: int = 4
     SPARX_SPEED: int = 5
-    SPARX_COOLDOWN: int = 3  # Frames of cooldown after hitting player
+    SPARX_COOLDOWN: int = 60  # Frames of cooldown after hitting player
     
     @property
     def screen_width(self) -> int:
@@ -456,8 +456,8 @@ class QixGame:
                        key=lambda p: abs(p[0] - target_y) + abs(p[1] - target_x))
         
         # Create clockwise and counter-clockwise Sparx
-        self.sparx_list.append(Sparx(start_pos, 1, 0))   # Clockwise
-        self.sparx_list.append(Sparx(start_pos, -1, 0))  # Counter-clockwise
+        self.sparx_list.append(Sparx(start_pos, 1, 0))   # Clockwise, index 0
+        self.sparx_list.append(Sparx(start_pos, -1, 1))  # Counter-clockwise, index 1
         
         # Add third Sparx for hard mode
         if difficulty == Difficulty.HARD:
@@ -465,7 +465,7 @@ class QixGame:
             opposite_x = self.config.GRID_WIDTH - 1 - target_x
             third_pos = min(self.perimeter,
                            key=lambda p: abs(p[0] - opposite_y) + abs(p[1] - opposite_x))
-            self.sparx_list.append(Sparx(third_pos, 1, 0))
+            self.sparx_list.append(Sparx(third_pos, 1, 2))  # Clockwise, index 2
     
     def handle_input(self) -> Tuple[int, int, bool]:
         """
@@ -884,6 +884,7 @@ class QixGame:
             if sparx.cooldown > 0:
                 sparx.cooldown -= 1
             
+            # === MOVEMENT TIMING ===
             sparx.move_timer += 1
             if sparx.move_timer < self.config.SPARX_SPEED:
                 continue
@@ -892,18 +893,40 @@ class QixGame:
             if not self.perimeter:
                 continue
             
+            # Store old position
             old_pos = sparx.pos
             
-            # Check trail start collision BEFORE moving (instant death if Sparx reaches trail start)
-            if self.player.is_drawing and old_pos == self.player.trail_start:
-                print("Sparx hit trail start!")
-                self._handle_player_death()
-                sparx.direction *= -1  # Reverse direction when hitting trail
-                sparx.cooldown = self.config.SPARX_COOLDOWN
-                sparx.last_pos = None
-                return
+            # === TRAIL START COLLISION CHECK ===
+            if self.player.is_drawing and sparx.cooldown == 0:
+                if old_pos == self.player.trail_start:
+                    print(f">>> Sparx #{sparx.index} hit trail start!")
+                    self.player.lives -= 1
+                    self.player.invincible_timer = 60  # Add invincibility for trail hits
+                    self._reset_trail()
+                    self.player.is_drawing = False
+                    if self.player.trail_start:
+                        self.player.y, self.player.x = self.player.trail_start
+                    
+                    # FORCE direction reversal by updating last_pos
+                    # Make the sparx think it just came from where it currently is
+                    # This forces it to go back the other way
+                    sparx.direction *= -1
+                    
+                    # If we have a valid last_pos, move the sparx back to it
+                    if sparx.last_pos is not None and sparx.last_pos != old_pos:
+                        sparx.pos = sparx.last_pos
+                        sparx.last_pos = old_pos
+                        print(f"    Sparx #{sparx.index} moved back from {old_pos} to {sparx.pos}")
+                    else:
+                        # No valid last_pos, just set last_pos to current to force reversal next frame
+                        sparx.last_pos = old_pos
+                    
+                    sparx.cooldown = 60  # Long cooldown to prevent rapid hits
+                    print(f"    Sparx #{sparx.index} direction reversed to {sparx.direction}")
+                    print(f"    Lives remaining: {self.player.lives}")
+                    continue
             
-            # Find all valid adjacent perimeter moves
+            # === FIND AND EXECUTE MOVEMENT ===
             valid_moves = []
             for dy, dx in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
                 ny, nx = old_pos[0] + dy, old_pos[1] + dx
@@ -912,11 +935,10 @@ class QixGame:
                 if new_pos not in self.perimeter:
                     continue
                 
-                # Check gap crossing (same as player logic)
                 if self._can_move_between_borders(old_pos, new_pos, dx != 0):
                     valid_moves.append((new_pos, dy, dx))
             
-            # Choose best move based on direction and avoiding backtracking
+            # Choose best move
             new_pos = None
             if valid_moves:
                 new_pos = self._choose_best_sparx_move(sparx, valid_moves, old_pos)
@@ -933,42 +955,54 @@ class QixGame:
                         new_pos = (ny, nx)
                         break
             
-            # If Sparx didn't move, skip collision checks
+            # If Sparx didn't actually move, skip post-movement collision checks
             if new_pos is None or new_pos == old_pos:
                 continue
             
-            # === COLLISION CHECKS (all wrapped behind cooldown) ===
-            if sparx.cooldown == 0 and self.player.invincible_timer == 0:
+            # === POST-MOVEMENT COLLISION CHECK ===
+            # Check collision if sparx cooldown is 0 (ignore player invincibility for this check)
+            if sparx.cooldown == 0:
                 player_pos = (self.player.y, self.player.x)
+                hit_detected = False
                 
-                # A. Player is exactly on new tile
+                # Check if player is now at the sparx's new position
                 if player_pos == sparx.pos:
-                    self.player.lives -= 1
-                    self.player.invincible_timer = 60
-                    sparx.direction *= -1  # Reverse direction on hit
-                    sparx.cooldown = self.config.SPARX_COOLDOWN
-                    sparx.last_pos = None
-                    print(f"Sparx hit player at new position! Direction reversed to {sparx.direction}. Lives: {self.player.lives}")
-                    continue
+                    print(f">>> Sparx #{sparx.index} moved into player at {sparx.pos}")
+                    hit_detected = True
                 
-                # B. Player is exactly on old tile
-                if player_pos == old_pos:
-                    self.player.lives -= 1
-                    self.player.invincible_timer = 60
-                    sparx.direction *= -1  # Reverse direction on hit
-                    sparx.cooldown = self.config.SPARX_COOLDOWN
-                    sparx.last_pos = None
-                    print(f"Sparx hit player at old position! Direction reversed to {sparx.direction}. Lives: {self.player.lives}")
-                    continue
+                # Check if player is still at old position (sparx moved away from player)
+                elif player_pos == old_pos:
+                    print(f">>> Sparx #{sparx.index} crossed player at {old_pos}")
+                    hit_detected = True
                 
-                # C. Player crossed through segment old → new
-                if self._player_crossed_segment(old_pos, sparx.pos, player_pos):
-                    self.player.lives -= 1
-                    self.player.invincible_timer = 60
-                    sparx.direction *= -1  # Reverse direction on hit
-                    sparx.cooldown = self.config.SPARX_COOLDOWN
-                    sparx.last_pos = None
-                    print(f"Sparx crossed player path! Direction reversed to {sparx.direction}. Lives: {self.player.lives}")
+                # Check if paths crossed during movement
+                elif self._player_crossed_segment(old_pos, sparx.pos, player_pos):
+                    print(f">>> Sparx #{sparx.index} and player paths crossed between {old_pos} and {sparx.pos}")
+                    hit_detected = True
+                
+                # Handle collision - only apply damage if player not invincible
+                if hit_detected:
+                    print(f"    Collision detected! Player invincible: {self.player.invincible_timer}, Sparx cooldown: {sparx.cooldown}")
+                    
+                    # Only damage player if not invincible
+                    if self.player.invincible_timer == 0:
+                        self.player.lives -= 1
+                        self.player.invincible_timer = 60
+                        print(f"    Lives remaining: {self.player.lives}")
+                    else:
+                        print(f"    Player is invincible - no damage")
+                    
+                    # Always reverse direction and set cooldown on collision
+                    old_direction = sparx.direction
+                    sparx.direction *= -1
+                    sparx.cooldown = 60
+                    
+                    # Move sparx back to where it was
+                    sparx.pos = old_pos
+                    sparx.last_pos = new_pos
+                    
+                    print(f"    Sparx #{sparx.index} direction: {old_direction} -> {sparx.direction}")
+                    continue
     
     def _can_move_between_borders(self, pos1: Tuple[int, int], 
                                    pos2: Tuple[int, int], 
