@@ -616,6 +616,28 @@ class QixGame:
                 self._handle_player_death()
                 return
             elif self.grid.tiles[self.player.y][self.player.x] == TileState.EMPTY:
+                # Before marking this tile as trail, check if placing it would create
+                # two adjacent trail tiles (side-by-side, not diagonal)
+                current_pos = (self.player.y, self.player.x)
+                
+                # Check 4-directional neighbors for existing trail tiles
+                adjacent_trail_count = 0
+                for dy, dx in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                    ny, nx = self.player.y + dy, self.player.x + dx
+                    if self.grid.in_bounds(ny, nx) and self.grid.tiles[ny][nx] == TileState.TRAIL:
+                        # Check if this trail tile is NOT the one we just came from
+                        # (we should have exactly one adjacent trail tile - the previous one)
+                        if len(self.player.trail) > 0 and (ny, nx) != self.player.trail[-1]:
+                            adjacent_trail_count += 1
+                
+                # If we found an adjacent trail tile that's not the previous one,
+                # we're creating a side-by-side situation
+                if adjacent_trail_count > 0:
+                    print("Created side-by-side trail tiles - death!")
+                    self._handle_player_death()
+                    return
+                
+                # Safe to mark as trail
                 self.grid.set(self.player.y, self.player.x, TileState.TRAIL)
                 self.player.trail.append((self.player.y, self.player.x))
         
