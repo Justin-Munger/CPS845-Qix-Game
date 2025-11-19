@@ -730,6 +730,7 @@ class QixGame:
             self._compute_perimeter()
             self._remap_sparx()
             self._relocate_qix()
+            self._teleport_player_to_perimeter()  # Teleport player if out of bounds
             
         except Exception as e:
             print(f"Trail completion error: {e}")
@@ -796,6 +797,24 @@ class QixGame:
             sparx.pos = nearest
             # Note: Do NOT reverse direction when remapping after trail completion
     
+    def _teleport_player_to_perimeter(self):
+        """Teleport player to nearest perimeter tile if they're out of bounds."""
+        if not self.perimeter:
+            return
+        
+        player_pos = (self.player.y, self.player.x)
+        
+        # Check if player is on valid perimeter
+        if player_pos in self.perimeter:
+            return
+        
+        # Find nearest perimeter tile using Manhattan distance
+        nearest = min(self.perimeter,
+                     key=lambda p: abs(p[0] - self.player.y) + abs(p[1] - self.player.x))
+        
+        self.player.y, self.player.x = nearest
+        print(f"Player teleported to nearest perimeter: {nearest}")
+    
     def update_qix(self):
         """
         Update all Qix positions and check collisions.
@@ -861,21 +880,9 @@ class QixGame:
         Checks for player collisions.
         """
         for sparx in self.sparx_list:
-            # Check player collision at CURRENT position first (before any timing checks)
-            # This ensures we catch the player even if they're moving quickly
-            if sparx.cooldown == 0 and self.player.invincible_timer == 0:
-                player_pos = (self.player.y, self.player.x)
-                
-                # Check if player is at current Sparx position
-                if player_pos == sparx.pos:
-                    self.player.lives -= 1
-                    self.player.invincible_timer = 60
-                    sparx.direction *= -1  # Reverse direction on hit
-                    sparx.cooldown = self.config.SPARX_COOLDOWN
-                    sparx.last_pos = None  # Clear to force new direction next move
-                    print(f"Sparx collision at position! Direction reversed to {sparx.direction}. Lives: {self.player.lives}")
-                    # Continue to next sparx - this one stays in place this frame
-                    continue
+            # Reduce cooldown timer
+            if sparx.cooldown > 0:
+                sparx.cooldown -= 1
             
             sparx.move_timer += 1
             if sparx.move_timer < self.config.SPARX_SPEED:
@@ -885,12 +892,9 @@ class QixGame:
             if not self.perimeter:
                 continue
             
-            if sparx.cooldown > 0:
-                sparx.cooldown -= 1
-            
             old_pos = sparx.pos
             
-            # Check trail start collision (instant death if Sparx reaches trail start)
+            # Check trail start collision BEFORE moving (instant death if Sparx reaches trail start)
             if self.player.is_drawing and old_pos == self.player.trail_start:
                 print("Sparx hit trail start!")
                 self._handle_player_death()
@@ -933,42 +937,37 @@ class QixGame:
             if new_pos is None or new_pos == old_pos:
                 continue
             
-            # Check player collision AFTER moving (if not in cooldown or invincible)
+            # === COLLISION CHECKS (all wrapped behind cooldown) ===
             if sparx.cooldown == 0 and self.player.invincible_timer == 0:
                 player_pos = (self.player.y, self.player.x)
                 
-                # Check if player is at new position
+                # A. Player is exactly on new tile
                 if player_pos == sparx.pos:
                     self.player.lives -= 1
                     self.player.invincible_timer = 60
                     sparx.direction *= -1  # Reverse direction on hit
                     sparx.cooldown = self.config.SPARX_COOLDOWN
-                    # Move sparx back to old position AND clear last_pos to force direction change
-                    sparx.pos = old_pos
-                    sparx.last_pos = None  # Clear last_pos so next move uses new direction
+                    sparx.last_pos = None
                     print(f"Sparx hit player at new position! Direction reversed to {sparx.direction}. Lives: {self.player.lives}")
                     continue
                 
-                # Check if player is at old position
+                # B. Player is exactly on old tile
                 if player_pos == old_pos:
                     self.player.lives -= 1
                     self.player.invincible_timer = 60
                     sparx.direction *= -1  # Reverse direction on hit
                     sparx.cooldown = self.config.SPARX_COOLDOWN
-                    sparx.pos = old_pos
                     sparx.last_pos = None
                     print(f"Sparx hit player at old position! Direction reversed to {sparx.direction}. Lives: {self.player.lives}")
                     continue
                 
-                # Check if player crossed the path between old and new position
+                # C. Player crossed through segment old → new
                 if self._player_crossed_segment(old_pos, sparx.pos, player_pos):
                     self.player.lives -= 1
                     self.player.invincible_timer = 60
                     sparx.direction *= -1  # Reverse direction on hit
                     sparx.cooldown = self.config.SPARX_COOLDOWN
-                    # Move sparx back to old position AND clear last_pos to force direction change
-                    sparx.pos = old_pos
-                    sparx.last_pos = None  # Clear last_pos so next move uses new direction
+                    sparx.last_pos = None
                     print(f"Sparx crossed player path! Direction reversed to {sparx.direction}. Lives: {self.player.lives}")
     
     def _can_move_between_borders(self, pos1: Tuple[int, int], 
