@@ -1,5 +1,5 @@
 """
-Qix-like Territory Capture Game
+Qix-like Territory Capture Game - Updated with Fixed Sparx and Rendering
 
 A Python implementation of the classic Qix arcade game where players capture
 territory by drawing lines while avoiding enemy entities.
@@ -63,7 +63,7 @@ class GameConfig:
     PLAYER_SPEED: int = 3
     QIX_SPEED: int = 4
     SPARX_SPEED: int = 5
-    SPARX_COOLDOWN: int = 0  # Frames of cooldown after hitting player
+    SPARX_COOLDOWN: int = 3  # Frames of cooldown after hitting player
     
     @property
     def screen_width(self) -> int:
@@ -74,11 +74,6 @@ class GameConfig:
     def screen_height(self) -> int:
         """Calculate scaled screen height."""
         return int(self.GRID_HEIGHT * self.TILE_SIZE * self.WINDOW_SCALE)
-    
-    @property
-    def scaled_tile_size(self) -> int:
-        """Calculate scaled tile size for rendering."""
-        return int(self.TILE_SIZE * self.WINDOW_SCALE)
     
     @property
     def scaled_hud_height(self) -> int:
@@ -244,8 +239,8 @@ class Player:
         """
         self.x = x                      # Grid position
         self.y = y
-        self.vis_x = float(x)           # Visual position (interpolated)
-        self.vis_y = float(y)
+        self.vis_x = float(x * 8)       # Visual position in pixels (interpolated)
+        self.vis_y = float(y * 8)
         self.lives = lives
         self.is_drawing = False         # Currently drawing a trail
         self.trail = []                 # List of trail coordinates
@@ -273,8 +268,8 @@ class Qix:
         self.x = x
         self.vel_y = 1                  # Vertical velocity (-1 or 1)
         self.vel_x = 1                  # Horizontal velocity (-1 or 1)
-        self.vis_x = float(x)           # Visual position (interpolated)
-        self.vis_y = float(y)
+        self.vis_x = float(x * 8)       # Visual position in pixels (interpolated)
+        self.vis_y = float(y * 8)
         self.move_timer = 0             # Frames until next move
 
 
@@ -301,8 +296,8 @@ class Sparx:
         self.pos = pos
         self.direction = direction      # Clockwise (1) or counter-clockwise (-1)
         self.index = index
-        self.vis_x = float(pos[1])      # Visual position (interpolated)
-        self.vis_y = float(pos[0])
+        self.vis_x = float(pos[1] * 8)  # Visual position in pixels (interpolated)
+        self.vis_y = float(pos[0] * 8)
         self.cooldown = 10              # Frames before can hit player again
         self.move_timer = 0             # Frames until next move
         self.last_pos = pos             # Previous position for pathfinding
@@ -357,6 +352,7 @@ class QixGame:
     def _load_assets(self):
         """Load image assets or create colored fallbacks."""
         try:
+            # Load images without scaling - keep original resolution
             self.background_img = pygame.image.load("water.png").convert()
             self.land_img = pygame.image.load("grass.png").convert()
             self.rock_img = pygame.image.load("rock.png").convert_alpha()
@@ -776,8 +772,8 @@ class QixGame:
                     nearest = min(empty_tiles, 
                                  key=lambda p: abs(p[0] - qix.y) + abs(p[1] - qix.x))
                     qix.y, qix.x = nearest
-                    qix.vis_x = float(qix.x)
-                    qix.vis_y = float(qix.y)
+                    qix.vis_x = float(qix.x * 8)
+                    qix.vis_y = float(qix.y * 8)
                     # Randomize velocity
                     qix.vel_x = 1 if random.random() > 0.5 else -1
                     qix.vel_y = 1 if random.random() > 0.5 else -1
@@ -898,6 +894,9 @@ class QixGame:
             if self.player.is_drawing and old_pos == self.player.trail_start:
                 print("Sparx hit trail start!")
                 self._handle_player_death()
+                sparx.direction *= -1  # Reverse direction when hitting trail
+                sparx.cooldown = self.config.SPARX_COOLDOWN
+                sparx.last_pos = None
                 return
             
             # Find all valid adjacent perimeter moves
@@ -948,6 +947,17 @@ class QixGame:
                     sparx.pos = old_pos
                     sparx.last_pos = None  # Clear last_pos so next move uses new direction
                     print(f"Sparx hit player at new position! Direction reversed to {sparx.direction}. Lives: {self.player.lives}")
+                    continue
+                
+                # Check if player is at old position
+                if player_pos == old_pos:
+                    self.player.lives -= 1
+                    self.player.invincible_timer = 60
+                    sparx.direction *= -1  # Reverse direction on hit
+                    sparx.cooldown = self.config.SPARX_COOLDOWN
+                    sparx.pos = old_pos
+                    sparx.last_pos = None
+                    print(f"Sparx hit player at old position! Direction reversed to {sparx.direction}. Lives: {self.player.lives}")
                     continue
                 
                 # Check if player crossed the path between old and new position
@@ -1108,116 +1118,67 @@ class QixGame:
     
     def render(self):
         """Render the game world, entities, and HUD."""
-        tile_size = self.config.scaled_tile_size
+        tile_size = self.config.TILE_SIZE
         
-        # Background
-        scaled_bg = pygame.transform.scale(
-            self.background_img, 
-            (self.config.screen_width, self.config.screen_height)
-        )
-        self.screen.blit(scaled_bg, (0, 0))
+        # Background - blit full image at position (0,0)
+        self.screen.blit(self.background_img, (0, 0))
         
-        # Grid tiles (filled and border)
+        # Grid tiles (filled and border) - use direct texture blitting like old version
         for y in range(self.grid.height):
             for x in range(self.grid.width):
                 if self.grid.tiles[y][x] in (TileState.BORDER, TileState.FILLED):
-                    px = x * tile_size
-                    py = y * tile_size
+                    # Calculate texture coordinates with wrapping
+                    tx = (x * tile_size) % self.land_img.get_width()
+                    ty = (y * tile_size) % self.land_img.get_height()
                     
-                    # Tile texture coordinates
-                    tx = (x * self.config.TILE_SIZE) % self.land_img.get_width()
-                    ty = (y * self.config.TILE_SIZE) % self.land_img.get_height()
-                    
-                    source_w = min(self.config.TILE_SIZE, 
-                                  self.land_img.get_width() - tx)
-                    source_h = min(self.config.TILE_SIZE, 
-                                  self.land_img.get_height() - ty)
-                    
-                    texture = self.land_img.subsurface(
-                        pygame.Rect(tx, ty, source_w, source_h)
-                    )
-                    scaled = pygame.transform.scale(texture, (tile_size, tile_size))
-                    self.screen.blit(scaled, (px, py))
+                    # Blit directly from land_img using texture coordinates
+                    rect = pygame.Rect(x * tile_size, y * tile_size, tile_size, tile_size)
+                    self.screen.blit(self.land_img, rect, pygame.Rect(tx, ty, tile_size, tile_size))
         
-        # HUD background (tiled)
+        # HUD background (tiled land texture)
         hud_y = self.config.screen_height
-        tiles_x = (self.config.screen_width // tile_size) + 1
-        tiles_y = (self.config.scaled_hud_height // tile_size) + 1
+        self.screen.blit(self.land_img, (0, hud_y), pygame.Rect(0, hud_y, self.config.screen_width, self.config.HUD_HEIGHT))
         
-        for ty in range(tiles_y):
-            for tx in range(tiles_x):
-                tex_x = (tx * self.config.TILE_SIZE) % self.land_img.get_width()
-                tex_y = (ty * self.config.TILE_SIZE) % self.land_img.get_height()
-                
-                source_w = min(self.config.TILE_SIZE, 
-                              self.land_img.get_width() - tex_x)
-                source_h = min(self.config.TILE_SIZE, 
-                              self.land_img.get_height() - tex_y)
-                
-                texture = self.land_img.subsurface(
-                    pygame.Rect(tex_x, tex_y, source_w, source_h)
-                )
-                scaled_tile = pygame.transform.scale(texture, (tile_size, tile_size))
-                self.screen.blit(scaled_tile, 
-                               (tx * tile_size, hud_y + ty * tile_size))
-        
-        # Trail (yellow line showing player's drawing)
-        for y, x in self.player.trail[:-1]:
+        # Trail (yellow rectangles showing player's drawing)
+        for y, x in self.player.trail[:-1]:  # Skip last tile to match old version
             pygame.draw.rect(
                 self.screen, 
                 (255, 200, 0), 
                 pygame.Rect(x * tile_size, y * tile_size, tile_size, tile_size)
             )
         
-        # Perimeter markers (rocks)
-        scaled_rock = pygame.transform.scale(self.rock_img, (tile_size, tile_size))
+        # Perimeter markers (rocks) - positioned with slight offset like old version
         for y, x in self.perimeter:
-            px = x * tile_size + (tile_size - scaled_rock.get_width()) // 2
-            py = y * tile_size + (tile_size - scaled_rock.get_height()) // 2
-            self.screen.blit(scaled_rock, (px, py))
+            pos = ((x * tile_size) - 1, (y * tile_size) - 1)
+            self.screen.blit(self.rock_img, pos)
         
         # Player (with interpolation for smooth movement)
-        self.player.vis_x += (self.player.x - self.player.vis_x) * 0.4
-        self.player.vis_y += (self.player.y - self.player.vis_y) * 0.4
+        self.player.vis_x += (self.player.x * tile_size - self.player.vis_x) * 0.4
+        self.player.vis_y += (self.player.y * tile_size - self.player.vis_y) * 0.4
         
         # Flash player when invincible
         if not (self.player.invincible_timer > 0 and 
                 (self.player.invincible_timer // 5) % 2 == 0):
-            scaled_player = pygame.transform.scale(
-                self.player_img, 
-                (tile_size + 6, tile_size + 6)
-            )
-            px = (self.player.vis_x * tile_size + tile_size // 2 - 
-                  scaled_player.get_width() // 2)
-            py = (self.player.vis_y * tile_size + tile_size // 2 - 
-                  scaled_player.get_height() // 2)
-            self.screen.blit(scaled_player, (int(px), int(py)))
+            # Offset player image by -3 pixels like old version
+            self.screen.blit(self.player_img, (int(self.player.vis_x) - 3, int(self.player.vis_y) - 3))
         
-        # Qix enemies
-        scaled_qix = pygame.transform.scale(
-            self.qix_img, 
-            (tile_size + 8, tile_size + 8)
-        )
+        # Qix enemies with smooth interpolation
         for qix in self.qix_list:
-            qix.vis_x += (qix.x - qix.vis_x) * 0.3
-            qix.vis_y += (qix.y - qix.vis_y) * 0.3
-            qx = qix.vis_x * tile_size + tile_size // 2 - scaled_qix.get_width() // 2
-            qy = qix.vis_y * tile_size + tile_size // 2 - scaled_qix.get_height() // 2
-            self.screen.blit(scaled_qix, (int(qx), int(qy)))
+            target_x = qix.x * tile_size
+            target_y = qix.y * tile_size
+            qix.vis_x += (target_x - qix.vis_x) * 0.3
+            qix.vis_y += (target_y - qix.vis_y) * 0.3
+            # Offset qix image by -4 pixels like old version
+            self.screen.blit(self.qix_img, (int(qix.vis_x) - 4, int(qix.vis_y) - 4))
         
-        # Sparx enemies
-        scaled_sparx = pygame.transform.scale(
-            self.sparx_img, 
-            (tile_size + 6, tile_size + 6)
-        )
+        # Sparx enemies with smooth interpolation
         for sparx in self.sparx_list:
-            sparx.vis_x += (sparx.pos[1] - sparx.vis_x) * 0.2
-            sparx.vis_y += (sparx.pos[0] - sparx.vis_y) * 0.2
-            sx = (sparx.vis_x * tile_size + tile_size // 2 - 
-                  scaled_sparx.get_width() // 2)
-            sy = (sparx.vis_y * tile_size + tile_size // 2 - 
-                  scaled_sparx.get_height() // 2)
-            self.screen.blit(scaled_sparx, (int(sx), int(sy)))
+            target_x = sparx.pos[1] * tile_size
+            target_y = sparx.pos[0] * tile_size
+            sparx.vis_x += (target_x - sparx.vis_x) * 0.2
+            sparx.vis_y += (target_y - sparx.vis_y) * 0.2
+            # Offset sparx image like old version
+            self.screen.blit(self.sparx_img, (int(sparx.vis_x) - 3, int(sparx.vis_y) - 4))
         
         # HUD text
         fill_pct = int(self.grid.calculate_fill_percentage() * 100)
@@ -1226,7 +1187,7 @@ class QixGame:
             True, 
             (0, 0, 0)
         )
-        self.screen.blit(hud_text, (5, hud_y + 2))
+        self.screen.blit(hud_text, (0, hud_y + 2))
         
         pygame.display.flip()
     
